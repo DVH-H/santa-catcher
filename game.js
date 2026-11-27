@@ -37,13 +37,16 @@ const DODGE_MIN_FREE_GAP = 50;
 const DODGE_REACHABLE_FINGER_SPEED = 450;
 const FLAWLESS_BANNER_SECONDS = 3.2;
 
-// "Perfect stretch": a rock-free, very narrow part of the course (about 5 seconds long).
-// The corridor is only the sleigh plus this many px free on each side, so you have to drive perfectly.
-// Positions are in world px along the course (about 245 px per second at that point).
-const DODGE_PERFECT_FREE_PIXELS = 10;
-const DODGE_PERFECT_START = 2800;
-const DODGE_PERFECT_END = 4050;
-const DODGE_PERFECT_RAMP = 300; // the corridor narrows / widens smoothly over this distance
+// "Perfect stretch": a rock-free part of the course from about second 10 to second 20 of the dodge round.
+// The corridor narrows smoothly (ramp in), is only the sleigh plus this many px free on each side for
+// about 5 seconds (the core), and then widens again (ramp out). You have to drive perfectly in the core.
+// Positions are in world px along the course. The course scrolls at 170 px/s, speeding up to about 290 px/s,
+// so second 10 is at about px 1940, second 12.5 at 2500, second 17.5 at 3710 and second 20 at 4360.
+const DODGE_PERFECT_FREE_PIXELS = 7;
+const DODGE_PERFECT_START = 2500; // start of the narrow core
+const DODGE_PERFECT_END = 3710; // end of the narrow core
+const DODGE_PERFECT_RAMP_IN = 560; // narrowing begins here: START - RAMP_IN (about second 10)
+const DODGE_PERFECT_RAMP_OUT = 650; // widening ends here: END + RAMP_OUT (about second 20)
 
 // Boss shooter: you are your own photo and fire automatically. Friends' photos are the asteroids.
 const BOSS_FIRE_INTERVAL_SECONDS = 0.28;
@@ -827,8 +830,8 @@ function getCorridorHalfWidth(worldY) {
 
 // 0 = normal corridor, 1 = fully narrow (perfect stretch), smooth in between.
 function getNarrowStretchBlend(worldY) {
-  const rampStart = DODGE_PERFECT_START - DODGE_PERFECT_RAMP;
-  const rampEnd = DODGE_PERFECT_END + DODGE_PERFECT_RAMP;
+  const rampStart = DODGE_PERFECT_START - DODGE_PERFECT_RAMP_IN;
+  const rampEnd = DODGE_PERFECT_END + DODGE_PERFECT_RAMP_OUT;
   if (worldY <= rampStart || worldY >= rampEnd) {
     return 0;
   }
@@ -837,17 +840,19 @@ function getNarrowStretchBlend(worldY) {
   }
   let t = 0;
   if (worldY < DODGE_PERFECT_START) {
-    t = (worldY - rampStart) / DODGE_PERFECT_RAMP;
+    t = (worldY - rampStart) / DODGE_PERFECT_RAMP_IN;
   } else {
-    t = 1 - (worldY - DODGE_PERFECT_END) / DODGE_PERFECT_RAMP;
+    t = 1 - (worldY - DODGE_PERFECT_END) / DODGE_PERFECT_RAMP_OUT;
   }
   return t * t * (3 - 2 * t);
 }
 
 // No rocks in the stretch or its ramps (plus a margin for the rock's own pass distance).
 function isInPerfectStretchZone(worldY) {
-  const margin = DODGE_PERFECT_RAMP + DODGE_ROCK_PASS_DISTANCE + 20;
-  return worldY >= DODGE_PERFECT_START - margin && worldY <= DODGE_PERFECT_END + margin;
+  const margin = DODGE_ROCK_PASS_DISTANCE + 20;
+  const zoneStart = DODGE_PERFECT_START - DODGE_PERFECT_RAMP_IN - margin;
+  const zoneEnd = DODGE_PERFECT_END + DODGE_PERFECT_RAMP_OUT + margin;
+  return worldY >= zoneStart && worldY <= zoneEnd;
 }
 
 // Distance between two free lanes (0 if they overlap).
@@ -1235,8 +1240,10 @@ function drawChainHints() {
 function drawDodgeWorld() {
   const rowHeight = 8;
   context.fillStyle = "#cfe3ff";
-  context.strokeStyle = "#7fb0f0";
-  context.lineWidth = 3;
+  // The walls glow orange while the narrow stretch is near or under you, so it is easy to notice.
+  const stretchIsNear = getNarrowStretchBlend(dodgeDistance + 150) > 0.15 || getNarrowStretchBlend(dodgeDistance) > 0;
+  context.strokeStyle = stretchIsNear ? "#ff8a5c" : "#7fb0f0";
+  context.lineWidth = stretchIsNear ? 5 : 3;
 
   context.beginPath();
   context.moveTo(-10, -rowHeight);
@@ -1682,7 +1689,36 @@ function buildMenuHtml() {
     buildItemTableHtml() +
     '<div class="small">Dit eget foto giver x2. Multiplikator gælder kun positive point.</div>' +
     "<h3>Opgraderinger og perks</h3>" +
-    buildUpgradeListHtml();
+    buildUpgradeListHtml() +
+    buildJumpToDodgeHtml();
+}
+
+// Shortcut for testing the dodge course. Only shown in the menu when you are Daniel.
+function buildJumpToDodgeHtml() {
+  if (lockedFriendId !== "daniel") {
+    return "";
+  }
+  return '<button id="jumpToDodge" class="jump-button">Spring til dodge-runden</button>';
+}
+
+function findFirstRoundOfType(roundType) {
+  for (let index = 0; index < ROUND_TYPES.length; index++) {
+    if (ROUND_TYPES[index] === roundType) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function jumpToDodgeRound() {
+  const dodgeIndex = findFirstRoundOfType("dodge");
+  if (dodgeIndex === -1) {
+    return;
+  }
+  menuPanel.style.display = "none";
+  modeBeforePause = null;
+  roundIndex = dodgeIndex;
+  startRound(); // sets the game mode to the countdown for the dodge round
 }
 
 function openMenu() {
@@ -1694,6 +1730,10 @@ function openMenu() {
   menuPanel.innerHTML = buildMenuHtml();
   menuPanel.scrollTop = 0;
   document.getElementById("menuClose").addEventListener("click", closeMenu);
+  const jumpButton = document.getElementById("jumpToDodge");
+  if (jumpButton !== null) {
+    jumpButton.addEventListener("click", jumpToDodgeRound);
+  }
   menuPanel.style.display = "flex";
 }
 
