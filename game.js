@@ -27,6 +27,15 @@ const DODGE_SCORE_PER_SECOND = 10;
 const DODGE_HIT_PENALTY = 30;
 const DODGE_COURSE_LENGTH = 5500; // world px until the corridor is at its narrowest
 const SLEIGH_HALF_HITBOX = 26;
+// A rock blocks the sleigh centre when it is closer than this (rock half size 18 + sleigh half 26).
+const DODGE_OBSTACLE_HALF_REACH = 44;
+// A rock can touch the sleigh while it is this many px above or below the sleigh (a bit more than the hit test uses).
+const DODGE_ROCK_PASS_DISTANCE = 40;
+// Every rock leaves at least this much room (for the sleigh CENTRE) on one side, so there is always a way past.
+const DODGE_MIN_FREE_GAP = 50;
+// Used to keep the free lanes of two rocks in a row within reach of a fast finger (px per second).
+const DODGE_REACHABLE_FINGER_SPEED = 450;
+const FLAWLESS_BANNER_SECONDS = 3.2;
 
 // Boss shooter: you are your own photo and fire automatically. Friends' photos are the asteroids.
 const BOSS_FIRE_INTERVAL_SECONDS = 0.28;
@@ -281,6 +290,9 @@ let invulnerableSecondsLeft = 0; // after a hit in dodge/boss
 let dodgeDistance = 0;
 let dodgeObstacles = [];
 let dodgeNextObstacleWorldY = 0;
+let dodgeLastFreeLane = null; // { left, right, worldY } of the previous rock, for reachability
+let dodgeHitCount = 0;
+let flawlessBannerSecondsLeft = 0;
 let bossBullets = [];
 let bossEnemies = [];
 let fireCooldownSeconds = 0;
@@ -362,6 +374,7 @@ function startRun() {
   ownedUpgradeIds = new Set();
   lockedFriendId = null;
   investLevel = 0;
+  flawlessBannerSecondsLeft = 0;
   startChoosePhase();
 }
 
@@ -389,6 +402,8 @@ function startRound() {
   dodgeDistance = 0;
   dodgeObstacles = [];
   dodgeNextObstacleWorldY = 450;
+  dodgeLastFreeLane = null;
+  dodgeHitCount = 0;
   bossBullets = [];
   bossEnemies = [];
   fireCooldownSeconds = 0;
@@ -412,6 +427,9 @@ function endRound() {
   if (isLastRound) {
     endRun();
     return;
+  }
+  if (ROUND_TYPES[roundIndex] === "dodge" && dodgeHitCount === 0) {
+    flawlessBannerSecondsLeft = FLAWLESS_BANNER_SECONDS; // shown over the countdown to the next round
   }
   const nextRoundType = ROUND_TYPES[roundIndex + 1];
   if (nextRoundType === "catch") {
@@ -478,8 +496,9 @@ function buildOffers() {
     available.push(upgrade);
   }
 
-  // Seeded shuffle: players in the same situation get the same offers.
-  const offerRandom = createRandomGenerator(RANDOM_SEED + 777 + roundIndex * 31);
+  // Real random shuffle: every player (and every run) gets different offers.
+  // The drops in the rounds themselves stay seeded, so the contest stays fair.
+  const offerRandom = Math.random;
   for (let index = available.length - 1; index > 0; index--) {
     const swapIndex = Math.floor(offerRandom() * (index + 1));
     const held = available[index];
@@ -786,13 +805,68 @@ function courseProgress(worldY) {
 
 // The course is a fixed function of distance, so every player runs the exact same track.
 function getCorridorCenter(worldY) {
-  const swing = 40 + 70 * courseProgress(worldY);
+  const swing = 25 + 25 * courseProgress(worldY); // how far the corridor wanders sideways
   const wave = Math.sin(worldY * 0.011) * 0.6 + Math.sin(worldY * 0.027 + 1.3) * 0.4;
   return GAME_WIDTH / 2 + swing * wave;
 }
 
 function getCorridorHalfWidth(worldY) {
-  return 140 - 55 * courseProgress(worldY);
+  return 150 - 35 * courseProgress(worldY); // 300 px wide at the start, 230 px at the end
+}
+
+// Distance between two free lanes (0 if they overlap).
+function getLaneDistance(laneA, laneB) {
+  return Math.max(0, laneA.left - laneB.right, laneB.left - laneA.right);
+}
+
+// Places one rock so that there is ALWAYS a free lane at least DODGE_MIN_FREE_GAP wide on one side of it,
+// and the free lane is within reach of the previous rock's free lane.
+function placeDodgeObstacle(worldY) {
+  // The corridor keeps moving while the sleigh passes the rock, so use the TIGHTEST walls
+  // over the whole time the rock can touch the sleigh. That keeps the free lane wide enough all the way past.
+  let minimumX = -Infinity; // furthest the sleigh centre can go left
+  let maximumX = Infinity; // furthest the sleigh centre can go right
+  for (let offset = -DODGE_ROCK_PASS_DISTANCE; offset <= DODGE_ROCK_PASS_DISTANCE; offset += 10) {
+    const centerX = getCorridorCenter(worldY + offset);
+    const halfWidth = getCorridorHalfWidth(worldY + offset);
+    minimumX = Math.max(minimumX, centerX - halfWidth + SLEIGH_HALF_HITBOX);
+    maximumX = Math.min(maximumX, centerX + halfWidth - SLEIGH_HALF_HITBOX);
+  }
+  const maximumGap = Math.max(DODGE_MIN_FREE_GAP, maximumX - minimumX - DODGE_OBSTACLE_HALF_REACH);
+
+  // Always draw the same random numbers, so every player gets exactly the same course.
+  const sideRoll = nextRandom();
+  const gapRoll = nextRandom();
+  const freeGap = DODGE_MIN_FREE_GAP + gapRoll * (maximumGap - DODGE_MIN_FREE_GAP);
+
+  // Option 1: rock on the left, free lane on the right. Option 2: the other way round.
+  const rockLeftX = maximumX - DODGE_OBSTACLE_HALF_REACH - freeGap;
+  const laneRight = { left: rockLeftX + DODGE_OBSTACLE_HALF_REACH, right: maximumX, worldY: worldY };
+  const rockRightX = minimumX + DODGE_OBSTACLE_HALF_REACH + freeGap;
+  const laneLeft = { left: minimumX, right: rockRightX - DODGE_OBSTACLE_HALF_REACH, worldY: worldY };
+
+  let firstChoiceIsRockLeft = sideRoll < 0.5;
+  if (dodgeLastFreeLane !== null) {
+    const timeProgress = courseProgress(worldY);
+    const scrollSpeed = 170 + 120 * timeProgress;
+    const travelSeconds = Math.max(0.15, (worldY - dodgeLastFreeLane.worldY - 68) / scrollSpeed);
+    const reachablePixels = travelSeconds * DODGE_REACHABLE_FINGER_SPEED;
+    const distanceToLaneRight = getLaneDistance(dodgeLastFreeLane, laneRight);
+    const distanceToLaneLeft = getLaneDistance(dodgeLastFreeLane, laneLeft);
+    const firstChoiceDistance = firstChoiceIsRockLeft ? distanceToLaneRight : distanceToLaneLeft;
+    const secondChoiceDistance = firstChoiceIsRockLeft ? distanceToLaneLeft : distanceToLaneRight;
+    if (firstChoiceDistance > reachablePixels && secondChoiceDistance < firstChoiceDistance) {
+      firstChoiceIsRockLeft = !firstChoiceIsRockLeft;
+    }
+  }
+
+  if (firstChoiceIsRockLeft) {
+    dodgeObstacles.push({ x: rockLeftX, worldY: worldY });
+    dodgeLastFreeLane = laneRight;
+  } else {
+    dodgeObstacles.push({ x: rockRightX, worldY: worldY });
+    dodgeLastFreeLane = laneLeft;
+  }
 }
 
 function stepDodge(dt) {
@@ -814,16 +888,13 @@ function stepDodge(dt) {
     if (invulnerableSecondsLeft === 0) {
       loseScore(DODGE_HIT_PENALTY, santaX, SANTA_Y - 30);
       invulnerableSecondsLeft = 1.0;
+      dodgeHitCount++;
     }
   }
 
   while (dodgeNextObstacleWorldY < dodgeDistance + SANTA_Y + 80) {
     const worldY = dodgeNextObstacleWorldY;
-    const centerX = getCorridorCenter(worldY);
-    const halfWidth = getCorridorHalfWidth(worldY);
-    const maximumOffset = halfWidth - 36;
-    const x = centerX + (nextRandom() * 2 - 1) * maximumOffset;
-    dodgeObstacles.push({ x: x, worldY: worldY });
+    placeDodgeObstacle(worldY);
     const progress = courseProgress(worldY);
     dodgeNextObstacleWorldY += (250 - 90 * progress) * (0.8 + nextRandom() * 0.4);
   }
@@ -835,10 +906,11 @@ function stepDodge(dt) {
       continue;
     }
     const closeVertically = Math.abs(screenY - SANTA_Y) < 34;
-    const closeHorizontally = Math.abs(obstacle.x - santaX) < 44;
+    const closeHorizontally = Math.abs(obstacle.x - santaX) < DODGE_OBSTACLE_HALF_REACH;
     if (closeVertically && closeHorizontally && invulnerableSecondsLeft === 0) {
       loseScore(DODGE_HIT_PENALTY, santaX, SANTA_Y - 30);
       invulnerableSecondsLeft = 1.0;
+      dodgeHitCount++;
       continue;
     }
     remainingObstacles.push(obstacle);
@@ -1293,6 +1365,13 @@ function render(dt) {
     }
   }
 
+  if (flawlessBannerSecondsLeft > 0) {
+    context.globalAlpha = Math.min(1, flawlessBannerSecondsLeft);
+    drawText("⭐ F1 STJERNE! ⭐", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 110, 34, "#ffe27a", "center");
+    drawText("Ingen point tabt i dodge-banen", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 74, 15, "#ffffff", "center");
+    context.globalAlpha = 1;
+  }
+
   if (gameMode === "choose") {
     drawText("Grib dit eget foto", GAME_WIDTH / 2, 40, 24, "#ffe27a", "center");
     drawText("Det er dig resten af spillet", GAME_WIDTH / 2, 70, 16, "#ffffff", "center");
@@ -1596,6 +1675,9 @@ function frameLoop(timestamp) {
   }
 
   menuButton.style.display = canOpenMenu() ? "block" : "none";
+  if (flawlessBannerSecondsLeft > 0) {
+    flawlessBannerSecondsLeft = Math.max(0, flawlessBannerSecondsLeft - frameSeconds);
+  }
 
   if (gameMode === "countdown") {
     // Santa can already move during the countdown.
