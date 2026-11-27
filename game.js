@@ -1436,21 +1436,24 @@ function showPickOverlay() {
 }
 
 function showFinalOverlay(finalScore, bestScore) {
-  // Group photo behind everything, darker at the top and bottom so the text stays readable.
+  // The whole final screen (photo, points, message, button) is one landscape card that is
+  // rotated 90 degrees by CSS (.final-rotated): turn the phone to read it.
+  // The photo is darker at the top and bottom so the text stays readable.
+  resetOverlayStyle();
   overlay.className = "final";
-  overlay.style.backgroundImage =
+  const photoBackground =
     "linear-gradient(to bottom, rgba(6,16,31,0.8) 0%, rgba(6,16,31,0.15) 35%, rgba(6,16,31,0.15) 65%, rgba(6,16,31,0.85) 100%), " +
-    'url("' + encodeURI(FINAL_IMAGE) + '")';
-
-  // The message is rotated 90 degrees (vertical writing): turn the phone to read all of it.
+    "url('" + encodeURI(FINAL_IMAGE) + "')";
   const messageLines = TEXT.finalMessage.join("<br>");
   overlay.innerHTML =
+    '<div class="final-rotated" style="background-image: ' + photoBackground + '">' +
     '<div class="final-top"><h2>' + TEXT.gameOver + "</h2>" +
     '<div class="big-score">' + finalScore + "</div>" +
     '<div class="small">' + TEXT.best + ": " + bestScore + "</div></div>" +
     '<div class="final-message">' + messageLines + "</div>" +
     '<div class="final-bottom"><button id="startButton">' + TEXT.again + "</button>" +
-    '<div class="small">' + TEXT.showHost + "</div></div>";
+    '<div class="small">' + TEXT.showHost + "</div></div>" +
+    "</div>";
 
   document.getElementById("startButton").addEventListener("click", startRun);
   overlay.style.display = "flex";

@@ -176,22 +176,34 @@
   .row-icons { flex: 0 0 80px; display: flex; align-items: center; justify-content: center; }
   .row-title { font-weight: 700; font-size: 13px; }
   .tag.owned-tag { background: #2e9e57; }
-  #overlay.final {
+  #overlay.final { padding: 0; overflow: hidden; background: #06101f; }
+  /* A 640x360 landscape card, rotated 90 degrees so it fills the 360x640 portrait screen. */
+  .final-rotated {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 640px;
+    height: 360px;
+    transform-origin: 0 0;
+    transform: translateX(360px) rotate(90deg);
+    display: flex;
+    flex-direction: column;
     justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    box-sizing: border-box;
     background-size: cover;
     background-position: center;
-    padding: 24px 16px;
   }
-  .final-top, .final-bottom { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .final-top { display: flex; flex-direction: row; align-items: center; gap: 18px; }
+  .final-top h2 { font-size: 26px; }
+  .final-top .big-score { font-size: 40px; }
+  .final-bottom { display: flex; flex-direction: column; align-items: center; gap: 6px; }
   .final-message {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    writing-mode: vertical-rl; /* text runs top to bottom: turn the phone to read it */
-    font-size: 30px;
+    font-size: 36px;
     font-weight: 800;
-    line-height: 1.4;
+    line-height: 1.25;
+    text-align: center;
     color: #ffffff;
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
   }
