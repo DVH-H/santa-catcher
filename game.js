@@ -49,21 +49,21 @@ const SANTA_EMOJI = "🛷";
 const SANTA_DRAW_SIZE = 84;
 const SANTA_CATCH_WIDTH = 70;
 
-// Friends: drop a photo at img/<id>.jpg and it is drawn as a circle. Same points for everyone.
+// Friends: the photo <id>.jpg in the same folder as index.html is drawn as a circle. Same points for everyone.
 // emoji = the letter shown until the photo exists. color = circle colour for that fallback.
 // Props: img/<id>.png (emoji until then). coal is the only bad item.
 // points: negative = penalty. weight: how often it drops. size: draw size in px.
 const FRIEND_POINTS = 10;
 const PROP_POINTS = 5;
 const ITEMS = {
-  jennis:     { label: "Jennis", emoji: "J",  image: "img/jennis.jpg", round: true, color: "#c0392b", points: FRIEND_POINTS, weight: 20, size: 54 },
-  talla:      { label: "Talla",  emoji: "T",  image: "img/talla.jpg",  round: true, color: "#8e44ad", points: FRIEND_POINTS, weight: 20, size: 54 },
-  jaras:      { label: "Jaras",  emoji: "Ja", image: "img/jaras.jpg",  round: true, color: "#16a085", points: FRIEND_POINTS, weight: 20, size: 54 },
-  daniel:     { label: "Daniel", emoji: "D",  image: "img/daniel.jpg", round: true, color: "#2980b9", points: FRIEND_POINTS, weight: 20, size: 54 },
+  jennis:     { label: "Jennis", emoji: "J",  image: "jennis.jpg", round: true, color: "#c0392b", points: FRIEND_POINTS, weight: 20, size: 54 },
+  talla:      { label: "Talla",  emoji: "T",  image: "talla.jpg",  round: true, color: "#8e44ad", points: FRIEND_POINTS, weight: 20, size: 54 },
+  jaras:      { label: "Jaras",  emoji: "Ja", image: "jaras.jpg",  round: true, color: "#16a085", points: FRIEND_POINTS, weight: 20, size: 54 },
+  daniel:     { label: "Daniel", emoji: "D",  image: "daniel.jpg", round: true, color: "#2980b9", points: FRIEND_POINTS, weight: 20, size: 54 },
   kendama:    { emoji: "🪀", image: "img/kendama.png",    points: PROP_POINTS, weight: 10, size: 40 },
   microphone: { emoji: "🎤", image: "img/microphone.png", points: PROP_POINTS, weight: 10, size: 40 },
-  pc:         { emoji: "💻", image: "img/pc.png",         points: PROP_POINTS, weight: 10, size: 40 },
   gloves:     { emoji: "🥊", image: "img/gloves.png",     points: PROP_POINTS, weight: 10, size: 40 },
+  pc:         { emoji: "💻", image: "img/pc.png",         points: PROP_POINTS, weight: 10, size: 40 },
   coal:       { emoji: "🪨", image: "img/coal.png",       points: -20, weight: 14, size: 40 }
 };
 
@@ -259,6 +259,8 @@ let dodgeNextObstacleWorldY = 0;
 let bossBullets = [];
 let bossEnemies = [];
 let fireCooldownSeconds = 0;
+let chooseSpawnCountdownSeconds = 0;
+let announceSecondsLeft = 0;
 let santaX = GAME_WIDTH / 2;
 let targetX = GAME_WIDTH / 2;
 let snowflakes = [];
@@ -293,10 +295,6 @@ function getItemPoints(itemId) {
 }
 
 function getSpawnWeight(itemId) {
-  const isFriend = ITEMS[itemId].round === true;
-  if (roundIndex === 0 && !isFriend) {
-    return 0; // round 1: only the four photos drop
-  }
   if (itemId === "coal" && hasUpgrade("train")) {
     return 0;
   }
@@ -322,7 +320,7 @@ function startRun() {
   score = 0;
   ownedUpgradeIds = new Set();
   lockedFriendId = null;
-  startRound();
+  startChoosePhase();
 }
 
 // Catching a friend's photo "locks you in" as that friend:
@@ -521,9 +519,6 @@ function triggerCombo(combo) {
 }
 
 function handleCatch(itemId, x) {
-  if (lockedFriendId === null && ITEMS[itemId].round) {
-    lockInAsFriend(itemId);
-  }
   let basePoints = getItemPoints(itemId);
   if (itemId === lockedFriendId) {
     basePoints *= 2;
@@ -562,6 +557,103 @@ function handleCatch(itemId, x) {
   if (bestCombo !== null) {
     triggerCombo(bestCombo);
     recentCatches = [];
+  }
+}
+
+// ---------- round 0: choose who you are ----------
+// The four friend photos fall in parallel lanes. The one you catch is you for the whole run.
+
+const CHOOSE_FALL_SPEED = 130;
+const CHOOSE_ROW_SECONDS = 2.4;
+const ANNOUNCE_SECONDS = 3.4;
+
+function getFriendIds() {
+  const friendIds = [];
+  for (const itemId of Object.keys(ITEMS)) {
+    if (ITEMS[itemId].round) {
+      friendIds.push(itemId);
+    }
+  }
+  return friendIds;
+}
+
+function findStarterCombo(friendId) {
+  for (const upgrade of UPGRADES) {
+    if (upgrade.kind === "combo" && upgrade.sequence[0] === friendId) {
+      return upgrade;
+    }
+  }
+  return null;
+}
+
+function startChoosePhase() {
+  roundIndex = 0;
+  score = 0;
+  fallingItems = [];
+  recentCatches = [];
+  popups = [];
+  banner = null;
+  multiplierValue = 1;
+  multiplierSecondsLeft = 0;
+  slowSecondsLeft = 0;
+  invulnerableSecondsLeft = 0;
+  santaX = GAME_WIDTH / 2;
+  targetX = GAME_WIDTH / 2;
+  roundElapsedSeconds = 0;
+  chooseSpawnCountdownSeconds = 0.4;
+  gameMode = "choose";
+  overlay.style.display = "none";
+}
+
+function spawnFriendRow() {
+  const friendIds = getFriendIds();
+  const laneWidth = GAME_WIDTH / friendIds.length;
+  for (let laneIndex = 0; laneIndex < friendIds.length; laneIndex++) {
+    fallingItems.push({
+      id: friendIds[laneIndex],
+      x: laneWidth * (laneIndex + 0.5),
+      y: -30,
+      speed: CHOOSE_FALL_SPEED,
+      spinPhase: laneIndex
+    });
+  }
+}
+
+function stepChoose(dt) {
+  roundElapsedSeconds += dt;
+  santaX += (targetX - santaX) * Math.min(1, 18 * dt);
+
+  chooseSpawnCountdownSeconds -= dt;
+  if (chooseSpawnCountdownSeconds <= 0) {
+    spawnFriendRow();
+    chooseSpawnCountdownSeconds = CHOOSE_ROW_SECONDS;
+  }
+
+  let caughtItem = null;
+  let caughtDistance = Infinity;
+  const stillFalling = [];
+  for (const item of fallingItems) {
+    item.y += item.speed * dt;
+    const definition = ITEMS[item.id];
+    const reachedSantaHeight = item.y + definition.size / 3 >= SANTA_Y - 12 && item.y <= SANTA_Y + 16;
+    const distance = Math.abs(item.x - santaX);
+    const insideCatchWidth = distance <= SANTA_CATCH_WIDTH / 2 + definition.size / 3;
+    if (reachedSantaHeight && insideCatchWidth && distance < caughtDistance) {
+      caughtItem = item;
+      caughtDistance = distance;
+    }
+    if (item.y <= GAME_HEIGHT + 50) {
+      stillFalling.push(item);
+    }
+  }
+  fallingItems = stillFalling;
+
+  if (caughtItem !== null) {
+    lockInAsFriend(caughtItem.id);
+    banner = null;
+    fallingItems = [];
+    announceSecondsLeft = ANNOUNCE_SECONDS;
+    gameMode = "announce";
   }
 }
 
@@ -1013,9 +1105,6 @@ function getRoundSubtitleLines() {
     const playerId = getPlayerFriendId();
     return ["BOSS", "Du er " + ITEMS[playerId].label + " - du skyder automatisk", "Skyd de andres fotos!"];
   }
-  if (roundIndex === 0) {
-    return ["Grib det første foto", "- det er dig"];
-  }
   return [];
 }
 
@@ -1029,6 +1118,30 @@ function getRoundLabel() {
     suffix = " · BOSS";
   }
   return "Runde " + (roundIndex + 1) + "/" + ROUND_COUNT + suffix;
+}
+
+function drawAnnouncement() {
+  context.fillStyle = "rgba(6, 16, 31, 0.8)";
+  context.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+  const friendId = lockedFriendId;
+  const friend = ITEMS[friendId];
+  drawIcon(context, friendId, friend.emoji, GAME_WIDTH / 2, 150, 120);
+  drawText("Du er " + friend.label + "!", GAME_WIDTH / 2, 250, 34, "#ffffff", "center");
+  drawText("Dit eget foto giver x2", GAME_WIDTH / 2, 288, 18, "#7dffa0", "center");
+
+  const combo = findStarterCombo(friendId);
+  if (combo !== null) {
+    drawText("KOMBO AKTIVERET", GAME_WIDTH / 2, 350, 20, "#ffe27a", "center");
+    drawText(combo.name, GAME_WIDTH / 2, 382, 22, "#ffffff", "center");
+    const firstId = combo.sequence[0];
+    const secondId = combo.sequence[1];
+    drawIcon(context, firstId, ITEMS[firstId].emoji, GAME_WIDTH / 2 - 50, 438, 48);
+    drawText("→", GAME_WIDTH / 2, 438, 28, "#ffffff", "center");
+    drawIcon(context, secondId, ITEMS[secondId].emoji, GAME_WIDTH / 2 + 50, 438, 48);
+    drawText(describeCombo(combo), GAME_WIDTH / 2, 490, 18, "#b8e4ff", "center");
+  }
+  drawText("Runde 1 starter...", GAME_WIDTH / 2, 560, 16, "#b8e4ff", "center");
 }
 
 function render(dt) {
@@ -1083,6 +1196,15 @@ function render(dt) {
       drawText(banner.text, GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60, 26, "#ffe27a", "center");
       context.globalAlpha = 1;
     }
+  }
+
+  if (gameMode === "choose") {
+    drawText("Grib dit eget foto", GAME_WIDTH / 2, 40, 24, "#ffe27a", "center");
+    drawText("Det er dig resten af spillet", GAME_WIDTH / 2, 70, 16, "#ffffff", "center");
+  }
+
+  if (gameMode === "announce") {
+    drawAnnouncement();
   }
 
   if (gameMode === "countdown") {
@@ -1141,7 +1263,7 @@ function showIntroOverlay() {
     "<h1>" + TEXT.title + "</h1>" +
     "<p>" + TEXT.intro + "</p>" +
     buildItemTableHtml() +
-    "<p class=\"small\">Runde 1: kun vennerne falder. Den første du griber er dig - dit eget foto giver x2 resten af spillet.</p>" +
+    "<p class=\"small\">Først vælger du dig selv: grib dit eget foto. Så er det dig resten af spillet, og dit eget foto giver x2.</p>" +
     '<button id="startButton">' + TEXT.start + "</button>";
   document.getElementById("startButton").addEventListener("click", startRun);
   overlay.style.display = "flex";
@@ -1297,6 +1419,14 @@ function frameLoop(timestamp) {
       }
       step(FIXED_STEP_SECONDS);
       accumulatorSeconds -= FIXED_STEP_SECONDS;
+    }
+  } else if (gameMode === "choose") {
+    stepChoose(frameSeconds);
+  } else if (gameMode === "announce") {
+    announceSecondsLeft -= frameSeconds;
+    if (announceSecondsLeft <= 0) {
+      roundIndex = 0;
+      startRound();
     }
   } else {
     accumulatorSeconds = 0;
