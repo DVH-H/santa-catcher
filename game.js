@@ -4,9 +4,39 @@
 // CONFIG - everything you will want to tweak is in this section
 // ============================================================
 
-const ROUND_COUNT = 5;
-const ROUND_SECONDS = 30;
-const COUNTDOWN_SECONDS = 2;
+// Round order. "catch" rounds come first (upgrade pick before each catch round after the first),
+// then the dodge course, then the boss shooter as the finale.
+const ROUND_TYPES = ["catch", "catch", "catch", "catch", "catch", "dodge", "boss"];
+const ROUND_COUNT = ROUND_TYPES.length;
+const SECONDS_BY_TYPE = { catch: 30, dodge: 25, boss: 30 };
+const COUNTDOWN_SECONDS_BY_TYPE = { catch: 2, dodge: 3, boss: 3 };
+
+function countRoundsOfType(roundType) {
+  let count = 0;
+  for (const type of ROUND_TYPES) {
+    if (type === roundType) {
+      count++;
+    }
+  }
+  return count;
+}
+const CATCH_ROUND_COUNT = countRoundsOfType("catch");
+
+// Dodge course: stay inside the icy corridor, steer around the coal. Walls and coal cost points.
+const DODGE_SCORE_PER_SECOND = 10;
+const DODGE_HIT_PENALTY = 30;
+const DODGE_COURSE_LENGTH = 5500; // world px until the corridor is at its narrowest
+const SLEIGH_HALF_HITBOX = 26;
+
+// Boss shooter: you are your own photo and fire automatically. Friends' photos are the asteroids.
+const BOSS_FIRE_INTERVAL_SECONDS = 0.28;
+const BOSS_BULLET_SPEED = 520;
+const BOSS_BIG_SIZE = 72;
+const BOSS_SMALL_SIZE = 44;
+const BOSS_HIT_POINTS = 2;
+const BOSS_DESTROY_BIG_POINTS = 8;
+const BOSS_DESTROY_SMALL_POINTS = 6;
+const BOSS_COLLISION_PENALTY = 30;
 const OFFER_COUNT = 3; // upgrades to choose between after each round
 const RANDOM_SEED = 2026; // same seed = same drops for every player (fair contest)
 const GAME_WIDTH = 360;
@@ -19,15 +49,22 @@ const SANTA_EMOJI = "🛷";
 const SANTA_DRAW_SIZE = 84;
 const SANTA_CATCH_WIDTH = 70;
 
+// Friends: drop a photo at img/<id>.jpg and it is drawn as a circle. Same points for everyone.
+// emoji = the letter shown until the photo exists. color = circle colour for that fallback.
+// Props: img/<id>.png (emoji until then). coal is the only bad item.
 // points: negative = penalty. weight: how often it drops. size: draw size in px.
+const FRIEND_POINTS = 10;
+const PROP_POINTS = 5;
 const ITEMS = {
-  gift:      { emoji: "🎁", image: "img/gift.png",      points: 10,  weight: 30, size: 44 },
-  cookie:    { emoji: "🍪", image: "img/cookie.png",    points: 5,   weight: 18, size: 38 },
-  milk:      { emoji: "🥛", image: "img/milk.png",      points: 5,   weight: 18, size: 38 },
-  candy:     { emoji: "🍬", image: "img/candy.png",     points: 3,   weight: 22, size: 36 },
-  snowflake: { emoji: "❄️", image: "img/snowflake.png", points: 2,   weight: 14, size: 38 },
-  star:      { emoji: "⭐", image: "img/star.png",      points: 25,  weight: 6,  size: 40 },
-  coal:      { emoji: "🪨", image: "img/coal.png",      points: -20, weight: 16, size: 40 }
+  jennis:     { label: "Jennis", emoji: "J",  image: "img/jennis.jpg", round: true, color: "#c0392b", points: FRIEND_POINTS, weight: 20, size: 54 },
+  talla:      { label: "Talla",  emoji: "T",  image: "img/talla.jpg",  round: true, color: "#8e44ad", points: FRIEND_POINTS, weight: 20, size: 54 },
+  jaras:      { label: "Jaras",  emoji: "Ja", image: "img/jaras.jpg",  round: true, color: "#16a085", points: FRIEND_POINTS, weight: 20, size: 54 },
+  daniel:     { label: "Daniel", emoji: "D",  image: "img/daniel.jpg", round: true, color: "#2980b9", points: FRIEND_POINTS, weight: 20, size: 54 },
+  kendama:    { emoji: "🪀", image: "img/kendama.png",    points: PROP_POINTS, weight: 10, size: 40 },
+  microphone: { emoji: "🎤", image: "img/microphone.png", points: PROP_POINTS, weight: 10, size: 40 },
+  pc:         { emoji: "💻", image: "img/pc.png",         points: PROP_POINTS, weight: 10, size: 40 },
+  gloves:     { emoji: "🥊", image: "img/gloves.png",     points: PROP_POINTS, weight: 10, size: 40 },
+  coal:       { emoji: "🪨", image: "img/coal.png",       points: -20, weight: 14, size: 40 }
 };
 
 // Upgrades the player can pick between rounds.
@@ -38,25 +75,19 @@ const ITEMS = {
 // kind "perk": a permanent effect, the code for each id is in the helper functions below.
 // conflictsWith: never offered together (coal combo is useless without coal).
 const UPGRADES = [
-  { id: "milk-cookies", kind: "combo", name: "Mælk & småkager", sequence: ["cookie", "milk"],          multiplier: 3, multiplierSeconds: 8 },
-  { id: "sugar-rush",   kind: "combo", name: "Sukkerchok",      sequence: ["candy", "candy", "candy"], multiplier: 4, multiplierSeconds: 6 },
-  { id: "wish",         kind: "combo", name: "Ønsket opfyldt",  sequence: ["star", "gift"],            bonusPoints: 100 },
-  { id: "snowman",      kind: "combo", name: "Snemand",         sequence: ["snowflake", "snowflake"],  bonusPoints: 40, slowSeconds: 5 },
-  { id: "forgiven",     kind: "combo", name: "Tilgivelse",      sequence: ["coal", "gift"],            bonusPoints: 75, conflictsWith: "train" },
+  { id: "jennis-kendama",  kind: "combo", name: "Jennis' kendama", sequence: ["jennis", "kendama"],     bonusPoints: 50, multiplier: 2, multiplierSeconds: 5 },
+  { id: "talla-mic",       kind: "combo", name: "Tallas mikrofon", sequence: ["talla", "microphone"],   bonusPoints: 50, multiplier: 2, multiplierSeconds: 5 },
+  { id: "daniel-pc",       kind: "combo", name: "Daniels PC",      sequence: ["daniel", "pc"],          bonusPoints: 50, multiplier: 2, multiplierSeconds: 5 },
+  { id: "jaras-gloves",    kind: "combo", name: "Jaras' bokse",    sequence: ["jaras", "gloves"],       bonusPoints: 50, multiplier: 2, multiplierSeconds: 5 },
 
-  { id: "train",     kind: "perk", icon: "🚂", name: "Polarekspressen", description: "Al kul forsvinder", conflictsWith: "forgiven" },
-  { id: "stars2",    kind: "perk", icon: "⭐", name: "Stjernehimmel",   description: "Dobbelt så mange stjerner" },
-  { id: "gifts2",    kind: "perk", icon: "🎁", name: "Gaveregn",        description: "Dobbelt så mange gaver" },
-  { id: "giftwrap",  kind: "perk", icon: "🎀", name: "Fin indpakning",  description: "Gaver giver +10 ekstra" },
-  { id: "goldstar",  kind: "perk", icon: "🌟", name: "Guldstjerne",     description: "Stjerner giver +25 ekstra" },
-  { id: "bakery",    kind: "perk", icon: "🧁", name: "Bageriet",        description: "Småkager og mælk giver dobbelt" },
+  { id: "train",     kind: "perk", icon: "🚂", name: "Polarekspressen", description: "Al kul forsvinder" },
   { id: "bigsleigh", kind: "perk", icon: "🛷", name: "Stor kane",       description: "Bredere kane (+45%)" },
   { id: "slowfall",  kind: "perk", icon: "🪂", name: "Faldskærm",       description: "Alt falder 15% langsommere" }
 ];
 
 const TEXT = {
   title: "Julemandens Grabber",
-  intro: ROUND_COUNT + " runder à " + ROUND_SECONDS + " sek. Træk fingeren for at styre kanen. Mellem runderne vælger du en opgradering.",
+  intro: ROUND_COUNT + " runder. Træk fingeren for at styre. Vælg opgraderinger mellem runderne - til sidst venter en dodge-bane og en boss!",
   start: "Start",
   again: "Spil igen",
   namePlaceholder: "Dit navn",
@@ -129,7 +160,49 @@ for (const itemId of Object.keys(ITEMS)) {
   loadImage(itemId, ITEMS[itemId].image);
 }
 
+// Round "Instagram style" photo with a white ring. Falls back to a coloured circle with a letter.
+function drawRoundIcon(context, id, centerX, centerY, size) {
+  const definition = ITEMS[id];
+  const entry = imageById[id];
+  const radius = size / 2;
+
+  context.save();
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.closePath();
+  if (entry && entry.loaded) {
+    context.clip();
+    const sourceWidth = entry.image.naturalWidth;
+    const sourceHeight = entry.image.naturalHeight;
+    const squareSize = Math.min(sourceWidth, sourceHeight);
+    const sourceX = (sourceWidth - squareSize) / 2;
+    const sourceY = (sourceHeight - squareSize) * 0.2; // faces are usually in the upper part
+    context.drawImage(entry.image, sourceX, sourceY, squareSize, squareSize, centerX - radius, centerY - radius, size, size);
+  } else {
+    context.fillStyle = definition.color;
+    context.fill();
+    context.fillStyle = "#ffffff";
+    context.font = "bold " + Math.round(size * 0.45) + "px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(definition.emoji, centerX, centerY);
+  }
+  context.restore();
+
+  context.save();
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.lineWidth = 3;
+  context.strokeStyle = "#ffffff";
+  context.stroke();
+  context.restore();
+}
+
 function drawIcon(context, id, emoji, centerX, centerY, size) {
+  if (ITEMS[id] && ITEMS[id].round) {
+    drawRoundIcon(context, id, centerX, centerY, size);
+    return;
+  }
   const entry = imageById[id];
   if (entry && entry.loaded) {
     const ratio = entry.image.naturalWidth / entry.image.naturalHeight;
@@ -164,9 +237,11 @@ let roundIndex = 0; // 0-based
 let score = 0;
 let roundStartScore = 0;
 let ownedUpgradeIds = new Set();
+let lockedFriendId = null; // the first friend photo you catch = who you are for the rest of the run
 
 // Current round
-let roundSecondsLeft = ROUND_SECONDS;
+let roundDurationSeconds = SECONDS_BY_TYPE.catch;
+let roundSecondsLeft = SECONDS_BY_TYPE.catch;
 let roundElapsedSeconds = 0;
 let countdownSecondsLeft = 0;
 let spawnCountdownSeconds = 0.5;
@@ -177,6 +252,13 @@ let banner = null;
 let multiplierValue = 1;
 let multiplierSecondsLeft = 0;
 let slowSecondsLeft = 0;
+let invulnerableSecondsLeft = 0; // after a hit in dodge/boss
+let dodgeDistance = 0;
+let dodgeObstacles = [];
+let dodgeNextObstacleWorldY = 0;
+let bossBullets = [];
+let bossEnemies = [];
+let fireCooldownSeconds = 0;
 let santaX = GAME_WIDTH / 2;
 let targetX = GAME_WIDTH / 2;
 let snowflakes = [];
@@ -207,31 +289,18 @@ function getOwnedCombos() {
 }
 
 function getItemPoints(itemId) {
-  let points = ITEMS[itemId].points;
-  if (itemId === "gift" && hasUpgrade("giftwrap")) {
-    points += 10;
-  }
-  if (itemId === "star" && hasUpgrade("goldstar")) {
-    points += 25;
-  }
-  if ((itemId === "cookie" || itemId === "milk") && hasUpgrade("bakery")) {
-    points *= 2;
-  }
-  return points;
+  return ITEMS[itemId].points;
 }
 
 function getSpawnWeight(itemId) {
-  let weight = ITEMS[itemId].weight;
+  const isFriend = ITEMS[itemId].round === true;
+  if (roundIndex === 0 && !isFriend) {
+    return 0; // round 1: only the four photos drop
+  }
   if (itemId === "coal" && hasUpgrade("train")) {
-    weight = 0;
+    return 0;
   }
-  if (itemId === "star" && hasUpgrade("stars2")) {
-    weight *= 2;
-  }
-  if (itemId === "gift" && hasUpgrade("gifts2")) {
-    weight *= 2;
-  }
-  return weight;
+  return ITEMS[itemId].weight;
 }
 
 function getCatchWidth() {
@@ -252,15 +321,37 @@ function startRun() {
   roundIndex = 0;
   score = 0;
   ownedUpgradeIds = new Set();
+  lockedFriendId = null;
   startRound();
+}
+
+// Catching a friend's photo "locks you in" as that friend:
+// your own photo is worth x2 and your own combo starts in your deck for free.
+function lockInAsFriend(friendId) {
+  lockedFriendId = friendId;
+  for (const upgrade of UPGRADES) {
+    if (upgrade.kind === "combo" && upgrade.sequence[0] === friendId) {
+      ownedUpgradeIds.add(upgrade.id);
+    }
+  }
+  banner = { text: "Du er " + ITEMS[friendId].label + "! Eget foto x2", lifeSeconds: 2.2 };
 }
 
 function startRound() {
   // Each round has its own seed, so every player sees the same drops in round N.
   nextRandom = createRandomGenerator(RANDOM_SEED + roundIndex * 1009);
   roundStartScore = score;
-  roundSecondsLeft = ROUND_SECONDS;
+  const roundType = ROUND_TYPES[roundIndex];
+  roundDurationSeconds = SECONDS_BY_TYPE[roundType];
+  roundSecondsLeft = roundDurationSeconds;
   roundElapsedSeconds = 0;
+  invulnerableSecondsLeft = 0;
+  dodgeDistance = 0;
+  dodgeObstacles = [];
+  dodgeNextObstacleWorldY = 450;
+  bossBullets = [];
+  bossEnemies = [];
+  fireCooldownSeconds = 0;
   spawnCountdownSeconds = 0.5;
   fallingItems = [];
   recentCatches = [];
@@ -271,7 +362,7 @@ function startRound() {
   slowSecondsLeft = 0;
   santaX = GAME_WIDTH / 2;
   targetX = GAME_WIDTH / 2;
-  countdownSecondsLeft = COUNTDOWN_SECONDS;
+  countdownSecondsLeft = COUNTDOWN_SECONDS_BY_TYPE[roundType];
   gameMode = "countdown";
   overlay.style.display = "none";
 }
@@ -282,8 +373,15 @@ function endRound() {
     endRun();
     return;
   }
-  gameMode = "pick";
-  showPickOverlay();
+  const nextRoundType = ROUND_TYPES[roundIndex + 1];
+  if (nextRoundType === "catch") {
+    gameMode = "pick";
+    showPickOverlay();
+    return;
+  }
+  // Dodge course and boss follow directly, no upgrade pick.
+  roundIndex++;
+  startRound();
 }
 
 function endRun() {
@@ -348,14 +446,15 @@ function pickItemId() {
       return itemId;
     }
   }
-  return "gift";
+  return "jennis";
 }
 
 function spawnItem() {
   const itemId = pickItemId();
   const definition = ITEMS[itemId];
   // Difficulty ramps over the whole run, not per round.
-  const runProgress = (roundIndex * ROUND_SECONDS + roundElapsedSeconds) / (ROUND_COUNT * ROUND_SECONDS);
+  const catchSeconds = SECONDS_BY_TYPE.catch;
+  const runProgress = (roundIndex * catchSeconds + roundElapsedSeconds) / (CATCH_ROUND_COUNT * catchSeconds);
   const baseSpeed = 140 + 150 * runProgress;
   const speed = baseSpeed * (0.85 + nextRandom() * 0.3);
   const margin = definition.size / 2 + 6;
@@ -422,7 +521,13 @@ function triggerCombo(combo) {
 }
 
 function handleCatch(itemId, x) {
-  const basePoints = getItemPoints(itemId);
+  if (lockedFriendId === null && ITEMS[itemId].round) {
+    lockInAsFriend(itemId);
+  }
+  let basePoints = getItemPoints(itemId);
+  if (itemId === lockedFriendId) {
+    basePoints *= 2;
+  }
   let gained = basePoints;
   if (gained > 0) {
     gained = gained * multiplierValue;
@@ -460,12 +565,253 @@ function handleCatch(itemId, x) {
   }
 }
 
+// ---------- dodge course and boss shooter ----------
+
+function getRoundType() {
+  return ROUND_TYPES[roundIndex];
+}
+
+function updatePopupsAndBanner(dt) {
+  for (const popup of popups) {
+    popup.lifeSeconds -= dt;
+    popup.y -= 40 * dt;
+  }
+  popups = popups.filter(function (popup) {
+    return popup.lifeSeconds > 0;
+  });
+  if (banner !== null) {
+    banner.lifeSeconds -= dt;
+    if (banner.lifeSeconds <= 0) {
+      banner = null;
+    }
+  }
+}
+
+function loseScore(amount, x, y) {
+  score = Math.max(0, score - amount);
+  addPopup("-" + amount, x, y, "#ff6b6b");
+}
+
+function courseProgress(worldY) {
+  return Math.max(0, Math.min(1, worldY / DODGE_COURSE_LENGTH));
+}
+
+// The course is a fixed function of distance, so every player runs the exact same track.
+function getCorridorCenter(worldY) {
+  const swing = 40 + 70 * courseProgress(worldY);
+  const wave = Math.sin(worldY * 0.011) * 0.6 + Math.sin(worldY * 0.027 + 1.3) * 0.4;
+  return GAME_WIDTH / 2 + swing * wave;
+}
+
+function getCorridorHalfWidth(worldY) {
+  return 140 - 55 * courseProgress(worldY);
+}
+
+function stepDodge(dt) {
+  const timeProgress = roundElapsedSeconds / roundDurationSeconds;
+  dodgeDistance += (170 + 120 * timeProgress) * dt;
+  score += DODGE_SCORE_PER_SECOND * dt;
+  if (invulnerableSecondsLeft > 0) {
+    invulnerableSecondsLeft = Math.max(0, invulnerableSecondsLeft - dt);
+  }
+
+  // Walls are solid: you are pushed back inside, and it costs points if you are not invulnerable.
+  santaX += (targetX - santaX) * Math.min(1, 18 * dt);
+  const corridorCenter = getCorridorCenter(dodgeDistance);
+  const corridorHalfWidth = getCorridorHalfWidth(dodgeDistance);
+  const minimumX = corridorCenter - corridorHalfWidth + SLEIGH_HALF_HITBOX;
+  const maximumX = corridorCenter + corridorHalfWidth - SLEIGH_HALF_HITBOX;
+  if (santaX < minimumX || santaX > maximumX) {
+    santaX = Math.max(minimumX, Math.min(maximumX, santaX));
+    if (invulnerableSecondsLeft === 0) {
+      loseScore(DODGE_HIT_PENALTY, santaX, SANTA_Y - 30);
+      invulnerableSecondsLeft = 1.0;
+    }
+  }
+
+  while (dodgeNextObstacleWorldY < dodgeDistance + SANTA_Y + 80) {
+    const worldY = dodgeNextObstacleWorldY;
+    const centerX = getCorridorCenter(worldY);
+    const halfWidth = getCorridorHalfWidth(worldY);
+    const maximumOffset = halfWidth - 36;
+    const x = centerX + (nextRandom() * 2 - 1) * maximumOffset;
+    dodgeObstacles.push({ x: x, worldY: worldY });
+    const progress = courseProgress(worldY);
+    dodgeNextObstacleWorldY += (250 - 90 * progress) * (0.8 + nextRandom() * 0.4);
+  }
+
+  const remainingObstacles = [];
+  for (const obstacle of dodgeObstacles) {
+    const screenY = SANTA_Y - (obstacle.worldY - dodgeDistance);
+    if (screenY > GAME_HEIGHT + 40) {
+      continue;
+    }
+    const closeVertically = Math.abs(screenY - SANTA_Y) < 34;
+    const closeHorizontally = Math.abs(obstacle.x - santaX) < 44;
+    if (closeVertically && closeHorizontally && invulnerableSecondsLeft === 0) {
+      loseScore(DODGE_HIT_PENALTY, santaX, SANTA_Y - 30);
+      invulnerableSecondsLeft = 1.0;
+      continue;
+    }
+    remainingObstacles.push(obstacle);
+  }
+  dodgeObstacles = remainingObstacles;
+
+  updatePopupsAndBanner(dt);
+}
+
+function getPlayerFriendId() {
+  return lockedFriendId !== null ? lockedFriendId : "daniel";
+}
+
+function getBossEnemyIds() {
+  const playerId = getPlayerFriendId();
+  const enemyIds = [];
+  for (const itemId of Object.keys(ITEMS)) {
+    if (ITEMS[itemId].round && itemId !== playerId) {
+      enemyIds.push(itemId);
+    }
+  }
+  return enemyIds;
+}
+
+function spawnBossEnemy() {
+  const enemyIds = getBossEnemyIds();
+  const friendId = enemyIds[Math.floor(nextRandom() * enemyIds.length)];
+  const progress = roundElapsedSeconds / roundDurationSeconds;
+  const x = BOSS_BIG_SIZE / 2 + nextRandom() * (GAME_WIDTH - BOSS_BIG_SIZE);
+  const driftSpeed = (nextRandom() * 2 - 1) * 50;
+  const fallSpeed = (70 + 60 * progress) * (0.8 + nextRandom() * 0.4);
+  bossEnemies.push({
+    id: friendId, x: x, y: -BOSS_BIG_SIZE, vx: driftSpeed, vy: fallSpeed,
+    size: BOSS_BIG_SIZE, hitPoints: 3, isBig: true
+  });
+  spawnCountdownSeconds = (1.3 - 0.5 * progress) * (0.8 + nextRandom() * 0.4);
+}
+
+// Like classic Asteroids: a big photo splits into two small ones.
+function addSplitEnemies(parent, targetList) {
+  const directions = [-1, 1];
+  for (const direction of directions) {
+    const driftSpeed = (60 + nextRandom() * 50) * direction;
+    targetList.push({
+      id: parent.id, x: parent.x, y: parent.y, vx: driftSpeed, vy: parent.vy * 1.15,
+      size: BOSS_SMALL_SIZE, hitPoints: 1, isBig: false
+    });
+  }
+}
+
+function stepBoss(dt) {
+  if (invulnerableSecondsLeft > 0) {
+    invulnerableSecondsLeft = Math.max(0, invulnerableSecondsLeft - dt);
+  }
+
+  santaX += (targetX - santaX) * Math.min(1, 18 * dt);
+  santaX = Math.max(30, Math.min(GAME_WIDTH - 30, santaX));
+
+  fireCooldownSeconds -= dt;
+  while (fireCooldownSeconds <= 0) {
+    bossBullets.push({ x: santaX, y: SANTA_Y - 34 });
+    fireCooldownSeconds += BOSS_FIRE_INTERVAL_SECONDS;
+  }
+
+  spawnCountdownSeconds -= dt;
+  if (spawnCountdownSeconds <= 0) {
+    spawnBossEnemy();
+  }
+
+  const fallFactor = hasUpgrade("slowfall") ? 0.85 : 1;
+  for (const enemy of bossEnemies) {
+    enemy.x += enemy.vx * dt;
+    enemy.y += enemy.vy * fallFactor * dt;
+    const halfSize = enemy.size / 2;
+    if (enemy.x < halfSize) {
+      enemy.x = halfSize;
+      enemy.vx = Math.abs(enemy.vx);
+    } else if (enemy.x > GAME_WIDTH - halfSize) {
+      enemy.x = GAME_WIDTH - halfSize;
+      enemy.vx = -Math.abs(enemy.vx);
+    }
+  }
+
+  const flyingBullets = [];
+  for (const bullet of bossBullets) {
+    bullet.y -= BOSS_BULLET_SPEED * dt;
+    if (bullet.y > -20) {
+      flyingBullets.push(bullet);
+    }
+  }
+
+  const survivingBullets = [];
+  const splitEnemies = [];
+  for (const bullet of flyingBullets) {
+    let bulletUsed = false;
+    for (const enemy of bossEnemies) {
+      if (enemy.hitPoints <= 0) {
+        continue;
+      }
+      const distanceX = bullet.x - enemy.x;
+      const distanceY = bullet.y - enemy.y;
+      const hitRadius = enemy.size / 2 + 4;
+      if (distanceX * distanceX + distanceY * distanceY > hitRadius * hitRadius) {
+        continue;
+      }
+      bulletUsed = true;
+      enemy.hitPoints--;
+      score += BOSS_HIT_POINTS;
+      if (enemy.hitPoints <= 0) {
+        const destroyPoints = enemy.isBig ? BOSS_DESTROY_BIG_POINTS : BOSS_DESTROY_SMALL_POINTS;
+        score += destroyPoints;
+        addPopup("+" + (destroyPoints + BOSS_HIT_POINTS), enemy.x, enemy.y, "#ffe27a");
+        if (enemy.isBig) {
+          addSplitEnemies(enemy, splitEnemies);
+        }
+      }
+      break;
+    }
+    if (!bulletUsed) {
+      survivingBullets.push(bullet);
+    }
+  }
+  bossBullets = survivingBullets;
+
+  const remainingEnemies = [];
+  for (const enemy of bossEnemies) {
+    if (enemy.hitPoints <= 0 || enemy.y > GAME_HEIGHT + 60) {
+      continue;
+    }
+    const distanceX = enemy.x - santaX;
+    const distanceY = enemy.y - SANTA_Y;
+    const collisionRadius = enemy.size / 2 + 20;
+    const touchesPlayer = distanceX * distanceX + distanceY * distanceY < collisionRadius * collisionRadius;
+    if (touchesPlayer && invulnerableSecondsLeft === 0) {
+      loseScore(BOSS_COLLISION_PENALTY, santaX, SANTA_Y - 40);
+      invulnerableSecondsLeft = 1.5;
+      continue;
+    }
+    remainingEnemies.push(enemy);
+  }
+  bossEnemies = remainingEnemies.concat(splitEnemies);
+
+  updatePopupsAndBanner(dt);
+}
+
 function step(dt) {
   roundElapsedSeconds += dt;
   roundSecondsLeft -= dt;
   if (roundSecondsLeft <= 0) {
     roundSecondsLeft = 0;
     endRound();
+    return;
+  }
+
+  const currentRoundType = getRoundType();
+  if (currentRoundType === "dodge") {
+    stepDodge(dt);
+    return;
+  }
+  if (currentRoundType === "boss") {
+    stepBoss(dt);
     return;
   }
 
@@ -588,8 +934,109 @@ function drawChainHints() {
   }
 }
 
+function drawDodgeWorld() {
+  const rowHeight = 8;
+  context.fillStyle = "#cfe3ff";
+  context.strokeStyle = "#7fb0f0";
+  context.lineWidth = 3;
+
+  context.beginPath();
+  context.moveTo(-10, -rowHeight);
+  for (let y = -rowHeight; y <= GAME_HEIGHT + rowHeight; y += rowHeight) {
+    const worldY = dodgeDistance + SANTA_Y - y;
+    context.lineTo(getCorridorCenter(worldY) - getCorridorHalfWidth(worldY), y);
+  }
+  context.lineTo(-10, GAME_HEIGHT + rowHeight);
+  context.closePath();
+  context.fill();
+  context.stroke();
+
+  context.beginPath();
+  context.moveTo(GAME_WIDTH + 10, -rowHeight);
+  for (let y = -rowHeight; y <= GAME_HEIGHT + rowHeight; y += rowHeight) {
+    const worldY = dodgeDistance + SANTA_Y - y;
+    context.lineTo(getCorridorCenter(worldY) + getCorridorHalfWidth(worldY), y);
+  }
+  context.lineTo(GAME_WIDTH + 10, GAME_HEIGHT + rowHeight);
+  context.closePath();
+  context.fill();
+  context.stroke();
+
+  for (const obstacle of dodgeObstacles) {
+    const screenY = SANTA_Y - (obstacle.worldY - dodgeDistance);
+    drawIcon(context, "coal", ITEMS.coal.emoji, obstacle.x, screenY, 46);
+  }
+}
+
+function isBlinking() {
+  return invulnerableSecondsLeft > 0 && Math.floor(roundElapsedSeconds * 10) % 2 === 0;
+}
+
+function drawSantaSprite() {
+  if (isBlinking()) {
+    return;
+  }
+  const santaScale = hasUpgrade("bigsleigh") && getRoundType() === "catch" ? 1.25 : 1;
+  drawIcon(context, "santa", SANTA_EMOJI, santaX, SANTA_Y, SANTA_DRAW_SIZE * santaScale);
+}
+
+function drawBossWorld() {
+  context.fillStyle = "#ffe27a";
+  for (const bullet of bossBullets) {
+    context.beginPath();
+    context.arc(bullet.x, bullet.y, 4, 0, Math.PI * 2);
+    context.fill();
+  }
+  for (const enemy of bossEnemies) {
+    drawIcon(context, enemy.id, ITEMS[enemy.id].emoji, enemy.x, enemy.y, enemy.size);
+  }
+  if (isBlinking()) {
+    return;
+  }
+  const playerId = getPlayerFriendId();
+  drawIcon(context, playerId, ITEMS[playerId].emoji, santaX, SANTA_Y, 58);
+  context.fillStyle = "#ffffff";
+  context.beginPath();
+  context.moveTo(santaX, SANTA_Y - 46);
+  context.lineTo(santaX - 8, SANTA_Y - 33);
+  context.lineTo(santaX + 8, SANTA_Y - 33);
+  context.closePath();
+  context.fill();
+}
+
+function getRoundSubtitleLines() {
+  const roundType = getRoundType();
+  if (roundType === "dodge") {
+    return ["DODGE-BANE", "Hold dig mellem væggene", "og styr udenom kullet!"];
+  }
+  if (roundType === "boss") {
+    const playerId = getPlayerFriendId();
+    return ["BOSS", "Du er " + ITEMS[playerId].label + " - du skyder automatisk", "Skyd de andres fotos!"];
+  }
+  if (roundIndex === 0) {
+    return ["Grib det første foto", "- det er dig"];
+  }
+  return [];
+}
+
+function getRoundLabel() {
+  const roundType = getRoundType();
+  let suffix = "";
+  if (roundType === "dodge") {
+    suffix = " · DODGE";
+  }
+  if (roundType === "boss") {
+    suffix = " · BOSS";
+  }
+  return "Runde " + (roundIndex + 1) + "/" + ROUND_COUNT + suffix;
+}
+
 function render(dt) {
   drawBackground(dt);
+  const roundType = getRoundType();
+  if (roundType === "dodge") {
+    drawDodgeWorld();
+  }
 
   for (const item of fallingItems) {
     const definition = ITEMS[item.id];
@@ -601,8 +1048,11 @@ function render(dt) {
     context.restore();
   }
 
-  const santaScale = hasUpgrade("bigsleigh") ? 1.25 : 1;
-  drawIcon(context, "santa", SANTA_EMOJI, santaX, SANTA_Y, SANTA_DRAW_SIZE * santaScale);
+  if (roundType === "boss") {
+    drawBossWorld();
+  } else {
+    drawSantaSprite();
+  }
 
   for (const popup of popups) {
     context.globalAlpha = Math.min(1, popup.lifeSeconds * 2);
@@ -613,10 +1063,14 @@ function render(dt) {
   if (gameMode === "playing" || gameMode === "countdown") {
     drawText("Point " + Math.round(score), 14, 24, 22, "#ffffff", "left");
     drawText(String(Math.ceil(roundSecondsLeft)) + "s", GAME_WIDTH - 14, 24, 22, "#ffffff", "right");
-    drawText("Runde " + (roundIndex + 1) + "/" + ROUND_COUNT, GAME_WIDTH / 2, 24, 16, "#b8e4ff", "center");
+    drawText(getRoundLabel(), GAME_WIDTH / 2, 24, 16, roundType === "catch" ? "#b8e4ff" : "#ff9a8a", "center");
   }
 
-  if (gameMode === "playing") {
+  if (gameMode === "playing" && lockedFriendId !== null) {
+    drawIcon(context, lockedFriendId, ITEMS[lockedFriendId].emoji, GAME_WIDTH - 26, 58, 30);
+  }
+
+  if (gameMode === "playing" && roundType === "catch") {
     if (multiplierSecondsLeft > 0) {
       drawText("x" + multiplierValue + "  " + multiplierSecondsLeft.toFixed(1) + "s", GAME_WIDTH / 2, 54, 22, "#7dffa0", "center");
     }
@@ -634,6 +1088,11 @@ function render(dt) {
   if (gameMode === "countdown") {
     drawText("Runde " + (roundIndex + 1), GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, 40, "#ffe27a", "center");
     drawText(String(Math.ceil(countdownSecondsLeft)), GAME_WIDTH / 2, GAME_HEIGHT / 2 + 30, 48, "#ffffff", "center");
+    let subtitleY = GAME_HEIGHT / 2 + 90;
+    for (const line of getRoundSubtitleLines()) {
+      drawText(line, GAME_WIDTH / 2, subtitleY, 18, "#b8e4ff", "center");
+      subtitleY += 26;
+    }
   }
 }
 
@@ -643,6 +1102,11 @@ function render(dt) {
 
 function iconHtml(itemId) {
   const definition = ITEMS[itemId];
+  if (definition.round) {
+    // Letter sits behind the photo, so it shows only while the photo is missing.
+    return '<span class="icon round" style="background:' + definition.color + '">' + definition.emoji +
+      '<img src="' + definition.image + '" alt="" onerror="this.remove()"></span>';
+  }
   return '<span class="icon"><img src="' + definition.image + '" alt="" onerror="this.replaceWith(document.createTextNode(\'' + definition.emoji + '\'))"></span>';
 }
 
@@ -672,31 +1136,13 @@ function buildItemTableHtml() {
   return html;
 }
 
-function buildNameInputHtml() {
-  return '<input id="nameInput" maxlength="16" placeholder="' + TEXT.namePlaceholder + '">';
-}
-
-function wireNameInput(onChange) {
-  const nameInput = document.getElementById("nameInput");
-  nameInput.value = safeStorageGet("santaName") || "";
-  nameInput.addEventListener("input", function () {
-    safeStorageSet("santaName", nameInput.value);
-    if (onChange) {
-      onChange(nameInput.value.trim());
-    }
-  });
-  return nameInput.value.trim();
-}
-
 function showIntroOverlay() {
   overlay.innerHTML =
     "<h1>" + TEXT.title + "</h1>" +
     "<p>" + TEXT.intro + "</p>" +
     buildItemTableHtml() +
-    "<p class=\"small\">Grib det gode, undgå kul. Runde 1 er øveren - lær symbolerne at kende.</p>" +
-    buildNameInputHtml() +
+    "<p class=\"small\">Runde 1: kun vennerne falder. Den første du griber er dig - dit eget foto giver x2 resten af spillet.</p>" +
     '<button id="startButton">' + TEXT.start + "</button>";
-  wireNameInput(null);
   document.getElementById("startButton").addEventListener("click", startRun);
   overlay.style.display = "flex";
 }
@@ -738,6 +1184,7 @@ function showPickOverlay() {
   overlay.innerHTML =
     "<h2>Runde " + (roundIndex + 1) + " færdig</h2>" +
     '<div class="small">+' + roundGain + " denne runde · i alt " + Math.round(score) + "</div>" +
+    (lockedFriendId !== null ? '<div class="small">Du er ' + iconHtml(lockedFriendId) + " " + ITEMS[lockedFriendId].label + " · eget foto x2</div>" : "") +
     "<h3>" + TEXT.pickTitle + "</h3>" +
     '<div class="cards">' + cardsHtml + "</div>" +
     '<div class="small">' + deckLine + "</div>";
@@ -754,18 +1201,11 @@ function showPickOverlay() {
 function showFinalOverlay(finalScore, bestScore) {
   overlay.innerHTML =
     "<h2>" + TEXT.gameOver + "</h2>" +
-    '<div class="big-score" id="finalScore"></div>' +
+    '<div class="big-score">' + finalScore + "</div>" +
     '<div class="small">' + TEXT.best + ": " + bestScore + "</div>" +
-    buildNameInputHtml() +
     '<button id="startButton">' + TEXT.again + "</button>" +
     '<div class="small">' + TEXT.showHost + "</div>";
 
-  const scoreLine = document.getElementById("finalScore");
-  function updateScoreLine(playerName) {
-    scoreLine.textContent = (playerName ? playerName + ": " : "") + finalScore;
-  }
-  const initialName = wireNameInput(updateScoreLine);
-  updateScoreLine(initialName);
   document.getElementById("startButton").addEventListener("click", startRun);
   overlay.style.display = "flex";
 }
