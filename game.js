@@ -45,7 +45,7 @@ const FLAWLESS_BANNER_SECONDS = 3.2;
 // (distance after t seconds is about 170*t + 1.5*t*t), so second 10 is at about px 1850, second 12.5 at 2360,
 // second 20.5 at 4115 and second 23 at 4700.
 const DODGE_FOLLOW_RATE = 45; // how fast the sleigh follows the finger in the dodge round (other rounds: 18)
-const DODGE_PERFECT_FREE_PIXELS = 7;
+const DODGE_PERFECT_FREE_PIXELS = 13; // was 7, widened by 2 px on each side
 const DODGE_PERFECT_START = 2360; // start of the narrow core
 const DODGE_PERFECT_END = 4115; // end of the narrow core
 const DODGE_PERFECT_RAMP_IN = 510; // narrowing begins here: START - RAMP_IN (about second 10)
