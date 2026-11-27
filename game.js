@@ -8,7 +8,7 @@
 // then the dodge course, then the boss shooter as the finale.
 const ROUND_TYPES = ["catch", "catch", "catch", "dodge", "boss"];
 const ROUND_COUNT = ROUND_TYPES.length;
-const SECONDS_BY_TYPE = { catch: 30, dodge: 25, boss: 30 };
+const SECONDS_BY_TYPE = { catch: 30, dodge: 40, boss: 30 };
 const COUNTDOWN_SECONDS_BY_TYPE = { catch: 2, dodge: 3, boss: 3 };
 
 function countRoundsOfType(roundType) {
@@ -25,7 +25,7 @@ const CATCH_ROUND_COUNT = countRoundsOfType("catch");
 // Dodge course: stay inside the icy corridor, steer around the coal. Walls and coal cost points.
 const DODGE_SCORE_PER_SECOND = 10;
 const DODGE_HIT_PENALTY = 30;
-const DODGE_COURSE_LENGTH = 5500; // world px until the corridor is at its narrowest
+const DODGE_COURSE_LENGTH = 9200; // world px of the whole 40 second course (difficulty grows along it)
 const SLEIGH_HALF_HITBOX = 26;
 // A rock blocks the sleigh centre when it is closer than this (rock half size 18 + sleigh half 26).
 const DODGE_OBSTACLE_HALF_REACH = 44;
@@ -37,16 +37,21 @@ const DODGE_MIN_FREE_GAP = 50;
 const DODGE_REACHABLE_FINGER_SPEED = 450;
 const FLAWLESS_BANNER_SECONDS = 3.2;
 
-// "Perfect stretch": a rock-free part of the course from about second 10 to second 20 of the dodge round.
+// "Perfect stretch": a rock-free part of the 40 second dodge round, from about second 10 to second 23.
 // The corridor narrows smoothly (ramp in), is only the sleigh plus this many px free on each side for
-// about 5 seconds (the core), and then widens again (ramp out). You have to drive perfectly in the core.
-// Positions are in world px along the course. The course scrolls at 170 px/s, speeding up to about 290 px/s,
-// so second 10 is at about px 1940, second 12.5 at 2500, second 17.5 at 3710 and second 20 at 4360.
+// about 8 seconds (the core), and then widens again (ramp out), after which the rocks come back.
+// In the core the corridor also swings from side to side across the whole screen, so you have to follow it.
+// Positions are in world px along the course. The course scrolls at 170 px/s, speeding up to about 290 px/s
+// (distance after t seconds is about 170*t + 1.5*t*t), so second 10 is at about px 1850, second 12.5 at 2360,
+// second 20.5 at 4115 and second 23 at 4700.
+const DODGE_FOLLOW_RATE = 45; // how fast the sleigh follows the finger in the dodge round (other rounds: 18)
 const DODGE_PERFECT_FREE_PIXELS = 7;
-const DODGE_PERFECT_START = 2500; // start of the narrow core
-const DODGE_PERFECT_END = 3710; // end of the narrow core
-const DODGE_PERFECT_RAMP_IN = 560; // narrowing begins here: START - RAMP_IN (about second 10)
-const DODGE_PERFECT_RAMP_OUT = 650; // widening ends here: END + RAMP_OUT (about second 20)
+const DODGE_PERFECT_START = 2360; // start of the narrow core
+const DODGE_PERFECT_END = 4115; // end of the narrow core
+const DODGE_PERFECT_RAMP_IN = 510; // narrowing begins here: START - RAMP_IN (about second 10)
+const DODGE_PERFECT_RAMP_OUT = 585; // widening ends here: END + RAMP_OUT (about second 23)
+const DODGE_PERFECT_SWING = 95; // how far (px) the core swings left and right of the screen centre
+const DODGE_PERFECT_WAVE_LENGTH = 1500; // world px for one full left-right-left swing (slow enough to follow)
 
 // Boss shooter: you are your own photo and fire automatically. Friends' photos are the asteroids.
 const BOSS_FIRE_INTERVAL_SECONDS = 0.28;
@@ -816,14 +821,20 @@ function courseProgress(worldY) {
 
 // The course is a fixed function of distance, so every player runs the exact same track.
 function getCorridorCenter(worldY) {
-  // How far the corridor wanders sideways. In the perfect stretch it runs almost straight.
-  const swing = (25 + 25 * courseProgress(worldY)) * (1 - 0.85 * getNarrowStretchBlend(worldY));
+  // How far the corridor wanders sideways in the normal parts.
+  const swing = 25 + 25 * courseProgress(worldY);
   const wave = Math.sin(worldY * 0.011) * 0.6 + Math.sin(worldY * 0.027 + 1.3) * 0.4;
-  return GAME_WIDTH / 2 + swing * wave;
+  const normalCenter = GAME_WIDTH / 2 + swing * wave;
+
+  // In the perfect stretch the corridor follows one big slow swing across the whole screen instead.
+  const stretchPhase = ((worldY - DODGE_PERFECT_START) / DODGE_PERFECT_WAVE_LENGTH) * 2 * Math.PI;
+  const stretchCenter = GAME_WIDTH / 2 + DODGE_PERFECT_SWING * Math.sin(stretchPhase);
+  const blend = getNarrowStretchBlend(worldY);
+  return normalCenter + (stretchCenter - normalCenter) * blend;
 }
 
 function getCorridorHalfWidth(worldY) {
-  const normalHalfWidth = 150 - 35 * courseProgress(worldY); // 300 px wide at the start, 230 px at the end
+  const normalHalfWidth = 150 - 20 * courseProgress(worldY); // 300 px wide at the start, 260 px at the end
   const narrowHalfWidth = SLEIGH_HALF_HITBOX + DODGE_PERFECT_FREE_PIXELS;
   return normalHalfWidth + (narrowHalfWidth - normalHalfWidth) * getNarrowStretchBlend(worldY);
 }
@@ -919,7 +930,9 @@ function stepDodge(dt) {
   }
 
   // Walls are solid: you are pushed back inside, and it costs points if you are not invulnerable.
-  santaX += (targetX - santaX) * Math.min(1, 18 * dt);
+  // The sleigh follows the finger much more tightly here than in the other rounds (it trails by only
+  // about 2 px in the swing), because the narrow stretch leaves just a few px of margin.
+  santaX += (targetX - santaX) * Math.min(1, DODGE_FOLLOW_RATE * dt);
   const corridorCenter = getCorridorCenter(dodgeDistance);
   const corridorHalfWidth = getCorridorHalfWidth(dodgeDistance);
   const minimumX = corridorCenter - corridorHalfWidth + SLEIGH_HALF_HITBOX;
