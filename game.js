@@ -60,17 +60,17 @@ const ITEMS = {
   talla:      { label: "Talla",  emoji: "T",  image: "talla.jpg",  round: true, color: "#8e44ad", points: FRIEND_POINTS, weight: 20, size: 54 },
   jaras:      { label: "Jaras",  emoji: "Ja", image: "jaras.jpg",  round: true, color: "#16a085", points: FRIEND_POINTS, weight: 20, size: 54 },
   daniel:     { label: "Daniel", emoji: "D",  image: "daniel.jpg", round: true, color: "#2980b9", points: FRIEND_POINTS, weight: 20, size: 54 },
-  kendama:    { emoji: "🪀", image: "img/kendama.png",    points: PROP_POINTS, weight: 10, size: 40 },
-  microphone: { emoji: "🎤", image: "img/microphone.png", points: PROP_POINTS, weight: 10, size: 40 },
-  gloves:     { emoji: "🥊", image: "img/gloves.png",     points: PROP_POINTS, weight: 10, size: 40 },
-  pc:         { emoji: "💻", image: "img/pc.png",         points: PROP_POINTS, weight: 10, size: 40 },
+  kendama:    { label: "kendamaen", emoji: "🪀", image: "img/kendama.png",    points: PROP_POINTS, weight: 10, size: 40 },
+  microphone: { label: "mikrofonen", emoji: "🎤", image: "img/microphone.png", points: PROP_POINTS, weight: 10, size: 40 },
+  gloves:     { label: "boksehandskerne", emoji: "🥊", image: "img/gloves.png",     points: PROP_POINTS, weight: 10, size: 40 },
+  pc:         { label: "PC'en", emoji: "💻", image: "img/pc.png",         points: PROP_POINTS, weight: 10, size: 40 },
   coal:       { emoji: "🪨", image: "img/coal.png",       points: -20, weight: 14, size: 40 }
 };
 
 // Upgrades the player can pick between rounds.
 //
-// kind "combo": fires when the LAST catches match the sequence exactly.
-//   Catching anything else in between breaks the chain. Items that fall past Santa do NOT break it.
+// kind "combo": fires when your LAST catches are exactly the items in `sequence`, in ANY order
+//   (friend then prop, or prop then friend). Catching anything else in between breaks the chain. Items that fall past Santa do NOT break it.
 //   Optional fields: bonusPoints, multiplier + multiplierSeconds, slowSeconds.
 // kind "perk": a permanent effect, the code for each id is in the helper functions below.
 // conflictsWith: never offered together (coal combo is useless without coal).
@@ -82,8 +82,31 @@ const UPGRADES = [
 
   { id: "train",     kind: "perk", icon: "🚂", name: "Polarekspressen", description: "Al kul forsvinder" },
   { id: "bigsleigh", kind: "perk", icon: "🛷", name: "Stor kane",       description: "Bredere kane (+45%)" },
-  { id: "slowfall",  kind: "perk", icon: "🪂", name: "Faldskærm",       description: "Alt falder 15% langsommere" }
+  { id: "slowfall",  kind: "perk", icon: "🪂", name: "Faldskærm",       description: "Alt falder 15% langsommere" },
+
+  // Always offered as one of the choices, can be taken again and again. Your own combo gets stronger.
+  { id: "invest",    kind: "perk", repeatable: true, icon: "📈", name: "Invester i dig selv", description: "" }
 ];
+
+// Each level of "invest" adds this to YOUR OWN combo.
+const INVEST_BONUS_POINTS = 30;
+const INVEST_MULTIPLIER_SECONDS = 2;
+
+// "Fjern <friend>": that friend's photo AND their prop stop dropping in the catch rounds,
+// and their combo is no longer offered. Added automatically for every friend.
+// You can not remove yourself, or a friend whose combo you already own.
+for (const friendId of getFriendIds()) {
+  const friendCombo = findStarterCombo(friendId);
+  const propId = friendCombo.sequence[1];
+  UPGRADES.push({
+    id: "kill-" + friendId,
+    kind: "perk",
+    icon: "💀",
+    name: "Fjern " + ITEMS[friendId].label,
+    description: ITEMS[friendId].label + " og " + ITEMS[propId].label + " dukker ikke op mere",
+    killsFriend: friendId
+  });
+}
 
 const TEXT = {
   title: "Julemandens Grabber",
@@ -238,6 +261,7 @@ let score = 0;
 let roundStartScore = 0;
 let ownedUpgradeIds = new Set();
 let lockedFriendId = null; // the first friend photo you catch = who you are for the rest of the run
+let investLevel = 0; // how many times you invested in yourself
 
 // Current round
 let roundDurationSeconds = SECONDS_BY_TYPE.catch;
@@ -294,7 +318,27 @@ function getItemPoints(itemId) {
   return ITEMS[itemId].points;
 }
 
+// True for a removed friend's photo and for their prop.
+function isItemRemoved(itemId) {
+  for (const friendId of getFriendIds()) {
+    if (!hasUpgrade("kill-" + friendId)) {
+      continue;
+    }
+    if (itemId === friendId) {
+      return true;
+    }
+    const friendCombo = findStarterCombo(friendId);
+    if (friendCombo !== null && friendCombo.sequence[1] === itemId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function getSpawnWeight(itemId) {
+  if (isItemRemoved(itemId)) {
+    return 0;
+  }
   if (itemId === "coal" && hasUpgrade("train")) {
     return 0;
   }
@@ -320,6 +364,7 @@ function startRun() {
   score = 0;
   ownedUpgradeIds = new Set();
   lockedFriendId = null;
+  investLevel = 0;
   startChoosePhase();
 }
 
@@ -396,17 +441,41 @@ function endRun() {
 
 function chooseUpgrade(upgradeId) {
   ownedUpgradeIds.add(upgradeId);
+  if (upgradeId === "invest") {
+    investLevel++;
+  }
   roundIndex++;
   startRound();
+}
+
+function isUpgradeBlocked(upgrade) {
+  if (upgrade.kind === "combo") {
+    // The combo of a removed friend is gone with them.
+    return hasUpgrade("kill-" + upgrade.sequence[0]);
+  }
+  if (upgrade.killsFriend) {
+    if (upgrade.killsFriend === lockedFriendId) {
+      return true;
+    }
+    const friendCombo = findStarterCombo(upgrade.killsFriend);
+    return friendCombo !== null && hasUpgrade(friendCombo.id);
+  }
+  return false;
 }
 
 function buildOffers() {
   const available = [];
   for (const upgrade of UPGRADES) {
+    if (upgrade.repeatable) {
+      continue; // "invest" is added as a fixed choice below
+    }
     if (hasUpgrade(upgrade.id)) {
       continue;
     }
     if (upgrade.conflictsWith && hasUpgrade(upgrade.conflictsWith)) {
+      continue;
+    }
+    if (isUpgradeBlocked(upgrade)) {
       continue;
     }
     available.push(upgrade);
@@ -420,7 +489,12 @@ function buildOffers() {
     available[index] = available[swapIndex];
     available[swapIndex] = held;
   }
-  return available.slice(0, OFFER_COUNT);
+  if (lockedFriendId === null) {
+    return available.slice(0, OFFER_COUNT);
+  }
+  const offers = available.slice(0, OFFER_COUNT - 1);
+  offers.push(findUpgrade("invest"));
+  return offers;
 }
 
 // ============================================================
@@ -465,55 +539,80 @@ function spawnItem() {
   spawnCountdownSeconds = minGap + nextRandom() * (maxGap - minGap);
 }
 
-function sequenceEndsRecent(sequence) {
-  if (recentCatches.length < sequence.length) {
-    return false;
+// Combos work in either order: the last catches only have to contain the same items as the combo.
+// Returns the combo items that are still missing after the last `length` catches,
+// or null if those catches do not fit the combo.
+function getMissingItems(sequence, length) {
+  if (recentCatches.length < length) {
+    return null;
   }
-  const offset = recentCatches.length - sequence.length;
-  for (let index = 0; index < sequence.length; index++) {
-    if (recentCatches[offset + index] !== sequence[index]) {
-      return false;
+  const missing = sequence.slice();
+  const offset = recentCatches.length - length;
+  for (let index = 0; index < length; index++) {
+    const caughtId = recentCatches[offset + index];
+    const missingIndex = missing.indexOf(caughtId);
+    if (missingIndex === -1) {
+      return null;
     }
+    missing.splice(missingIndex, 1);
   }
-  return true;
+  return missing;
 }
 
-// How many items of the sequence are already caught in a row (0 = not started).
-function sequenceProgress(sequence) {
+function sequenceEndsRecent(sequence) {
+  const missing = getMissingItems(sequence, sequence.length);
+  return missing !== null && missing.length === 0;
+}
+
+// Combo started but not finished: which items you already caught and which are still needed.
+function getComboProgress(sequence) {
   const longestStart = Math.min(recentCatches.length, sequence.length - 1);
   for (let length = longestStart; length >= 1; length--) {
-    const offset = recentCatches.length - length;
-    let matches = true;
-    for (let index = 0; index < length; index++) {
-      if (recentCatches[offset + index] !== sequence[index]) {
-        matches = false;
-        break;
-      }
-    }
-    if (matches) {
-      return length;
+    const missing = getMissingItems(sequence, length);
+    if (missing !== null) {
+      const caught = recentCatches.slice(recentCatches.length - length);
+      return { caught: caught, missing: missing };
     }
   }
-  return 0;
+  return null;
 }
 
 function addPopup(text, x, y, color) {
   popups.push({ text: text, x: x, y: y, color: color, lifeSeconds: 0.9 });
 }
 
+// The combo as it is worth right now. Your own combo gets better with every "invest".
+function getComboStrength(combo, level) {
+  const strength = {
+    bonusPoints: combo.bonusPoints || 0,
+    multiplier: combo.multiplier || 0,
+    multiplierSeconds: combo.multiplierSeconds || 0,
+    slowSeconds: combo.slowSeconds || 0
+  };
+  const isOwnCombo = lockedFriendId !== null && combo.sequence[0] === lockedFriendId;
+  if (isOwnCombo) {
+    strength.bonusPoints += INVEST_BONUS_POINTS * level;
+    if (strength.multiplier > 0) {
+      strength.multiplierSeconds += INVEST_MULTIPLIER_SECONDS * level;
+    }
+  }
+  return strength;
+}
+
 function triggerCombo(combo) {
+  const strength = getComboStrength(combo, investLevel);
   let bonusText = "";
-  if (combo.bonusPoints) {
-    score += combo.bonusPoints;
-    bonusText = "+" + combo.bonusPoints;
+  if (strength.bonusPoints) {
+    score += strength.bonusPoints;
+    bonusText = "+" + strength.bonusPoints;
   }
-  if (combo.multiplier) {
-    multiplierValue = combo.multiplier;
-    multiplierSecondsLeft = combo.multiplierSeconds;
-    bonusText = "x" + combo.multiplier;
+  if (strength.multiplier) {
+    multiplierValue = strength.multiplier;
+    multiplierSecondsLeft = strength.multiplierSeconds;
+    bonusText = "x" + strength.multiplier;
   }
-  if (combo.slowSeconds) {
-    slowSecondsLeft = combo.slowSeconds;
+  if (strength.slowSeconds) {
+    slowSecondsLeft = strength.slowSeconds;
   }
   banner = { text: combo.name + " " + bonusText, lifeSeconds: 1.6 };
 }
@@ -1004,23 +1103,24 @@ function drawText(text, x, y, size, color, align) {
 function drawChainHints() {
   let row = 0;
   for (const combo of getOwnedCombos()) {
-    const progress = sequenceProgress(combo.sequence);
-    if (progress === 0 || row >= 2) {
+    const progress = getComboProgress(combo.sequence);
+    if (progress === null || row >= 2) {
       continue;
     }
     const y = 84 + row * 30;
     let x = 22;
     context.globalAlpha = 1;
-    for (let index = 0; index < progress; index++) {
-      const itemId = combo.sequence[index];
-      drawIcon(context, itemId, ITEMS[itemId].emoji, x, y, 24);
+    for (const caughtId of progress.caught) {
+      drawIcon(context, caughtId, ITEMS[caughtId].emoji, x, y, 24);
       x += 28;
     }
-    drawText("→", x, y, 18, "#ffffff", "center");
+    drawText("+", x, y, 18, "#ffffff", "center");
     x += 26;
-    const nextId = combo.sequence[progress];
     context.globalAlpha = 0.65;
-    drawIcon(context, nextId, ITEMS[nextId].emoji, x, y, 24);
+    for (const missingId of progress.missing) {
+      drawIcon(context, missingId, ITEMS[missingId].emoji, x, y, 24);
+      x += 28;
+    }
     context.globalAlpha = 1;
     row++;
   }
@@ -1137,7 +1237,7 @@ function drawAnnouncement() {
     const firstId = combo.sequence[0];
     const secondId = combo.sequence[1];
     drawIcon(context, firstId, ITEMS[firstId].emoji, GAME_WIDTH / 2 - 50, 438, 48);
-    drawText("→", GAME_WIDTH / 2, 438, 28, "#ffffff", "center");
+    drawText("+", GAME_WIDTH / 2, 438, 28, "#ffffff", "center");
     drawIcon(context, secondId, ITEMS[secondId].emoji, GAME_WIDTH / 2 + 50, 438, 48);
     drawText(describeCombo(combo), GAME_WIDTH / 2, 490, 18, "#b8e4ff", "center");
   }
@@ -1232,18 +1332,27 @@ function iconHtml(itemId) {
   return '<span class="icon"><img src="' + definition.image + '" alt="" onerror="this.replaceWith(document.createTextNode(\'' + definition.emoji + '\'))"></span>';
 }
 
-function describeCombo(combo) {
+function describeCombo(combo, level) {
+  const strength = getComboStrength(combo, level === undefined ? investLevel : level);
   const parts = [];
-  if (combo.bonusPoints) {
-    parts.push("+" + combo.bonusPoints);
+  if (strength.bonusPoints) {
+    parts.push("+" + strength.bonusPoints);
   }
-  if (combo.multiplier) {
-    parts.push("x" + combo.multiplier + " i " + combo.multiplierSeconds + "s");
+  if (strength.multiplier) {
+    parts.push("x" + strength.multiplier + " i " + strength.multiplierSeconds + "s");
   }
-  if (combo.slowSeconds) {
-    parts.push("langsomt " + combo.slowSeconds + "s");
+  if (strength.slowSeconds) {
+    parts.push("langsomt " + strength.slowSeconds + "s");
   }
   return parts.join(" + ");
+}
+
+function getUpgradeDescription(upgrade) {
+  if (upgrade.id === "invest") {
+    const ownCombo = findStarterCombo(lockedFriendId);
+    return ownCombo.name + ": " + describeCombo(ownCombo, investLevel) + " → " + describeCombo(ownCombo, investLevel + 1);
+  }
+  return upgrade.description;
 }
 
 function buildItemTableHtml() {
@@ -1273,12 +1382,12 @@ function buildOfferCardHtml(upgrade) {
   let iconPart = "";
   let descriptionPart = "";
   if (upgrade.kind === "combo") {
-    const icons = upgrade.sequence.map(iconHtml).join('<span class="arrow">→</span>');
+    const icons = upgrade.sequence.map(iconHtml).join('<span class="arrow">+</span>');
     iconPart = icons;
     descriptionPart = describeCombo(upgrade);
   } else {
     iconPart = '<span class="icon big">' + upgrade.icon + "</span>";
-    descriptionPart = upgrade.description;
+    descriptionPart = getUpgradeDescription(upgrade);
   }
   const tag = upgrade.kind === "combo" ? "Kombo" : "Perk";
   return '<button class="card" data-upgrade="' + upgrade.id + '">' +
@@ -1298,7 +1407,11 @@ function showPickOverlay() {
   const ownedNames = [];
   for (const upgrade of UPGRADES) {
     if (hasUpgrade(upgrade.id)) {
-      ownedNames.push(upgrade.name);
+      let deckName = upgrade.name;
+      if (upgrade.id === "invest") {
+        deckName += " x" + investLevel;
+      }
+      ownedNames.push(deckName);
     }
   }
   const deckLine = ownedNames.length > 0 ? TEXT.yourDeck + ": " + ownedNames.join(", ") : "";
