@@ -37,6 +37,14 @@ const DODGE_MIN_FREE_GAP = 50;
 const DODGE_REACHABLE_FINGER_SPEED = 450;
 const FLAWLESS_BANNER_SECONDS = 3.2;
 
+// "Perfect stretch": a rock-free, very narrow part of the course (about 5 seconds long).
+// The corridor is only the sleigh plus this many px free on each side, so you have to drive perfectly.
+// Positions are in world px along the course (about 245 px per second at that point).
+const DODGE_PERFECT_FREE_PIXELS = 10;
+const DODGE_PERFECT_START = 2800;
+const DODGE_PERFECT_END = 4050;
+const DODGE_PERFECT_RAMP = 300; // the corridor narrows / widens smoothly over this distance
+
 // Boss shooter: you are your own photo and fire automatically. Friends' photos are the asteroids.
 const BOSS_FIRE_INTERVAL_SECONDS = 0.28;
 const BOSS_BULLET_SPEED = 520;
@@ -805,13 +813,41 @@ function courseProgress(worldY) {
 
 // The course is a fixed function of distance, so every player runs the exact same track.
 function getCorridorCenter(worldY) {
-  const swing = 25 + 25 * courseProgress(worldY); // how far the corridor wanders sideways
+  // How far the corridor wanders sideways. In the perfect stretch it runs almost straight.
+  const swing = (25 + 25 * courseProgress(worldY)) * (1 - 0.85 * getNarrowStretchBlend(worldY));
   const wave = Math.sin(worldY * 0.011) * 0.6 + Math.sin(worldY * 0.027 + 1.3) * 0.4;
   return GAME_WIDTH / 2 + swing * wave;
 }
 
 function getCorridorHalfWidth(worldY) {
-  return 150 - 35 * courseProgress(worldY); // 300 px wide at the start, 230 px at the end
+  const normalHalfWidth = 150 - 35 * courseProgress(worldY); // 300 px wide at the start, 230 px at the end
+  const narrowHalfWidth = SLEIGH_HALF_HITBOX + DODGE_PERFECT_FREE_PIXELS;
+  return normalHalfWidth + (narrowHalfWidth - normalHalfWidth) * getNarrowStretchBlend(worldY);
+}
+
+// 0 = normal corridor, 1 = fully narrow (perfect stretch), smooth in between.
+function getNarrowStretchBlend(worldY) {
+  const rampStart = DODGE_PERFECT_START - DODGE_PERFECT_RAMP;
+  const rampEnd = DODGE_PERFECT_END + DODGE_PERFECT_RAMP;
+  if (worldY <= rampStart || worldY >= rampEnd) {
+    return 0;
+  }
+  if (worldY >= DODGE_PERFECT_START && worldY <= DODGE_PERFECT_END) {
+    return 1;
+  }
+  let t = 0;
+  if (worldY < DODGE_PERFECT_START) {
+    t = (worldY - rampStart) / DODGE_PERFECT_RAMP;
+  } else {
+    t = 1 - (worldY - DODGE_PERFECT_END) / DODGE_PERFECT_RAMP;
+  }
+  return t * t * (3 - 2 * t);
+}
+
+// No rocks in the stretch or its ramps (plus a margin for the rock's own pass distance).
+function isInPerfectStretchZone(worldY) {
+  const margin = DODGE_PERFECT_RAMP + DODGE_ROCK_PASS_DISTANCE + 20;
+  return worldY >= DODGE_PERFECT_START - margin && worldY <= DODGE_PERFECT_END + margin;
 }
 
 // Distance between two free lanes (0 if they overlap).
@@ -894,7 +930,9 @@ function stepDodge(dt) {
 
   while (dodgeNextObstacleWorldY < dodgeDistance + SANTA_Y + 80) {
     const worldY = dodgeNextObstacleWorldY;
-    placeDodgeObstacle(worldY);
+    if (!isInPerfectStretchZone(worldY)) {
+      placeDodgeObstacle(worldY);
+    }
     const progress = courseProgress(worldY);
     dodgeNextObstacleWorldY += (250 - 90 * progress) * (0.8 + nextRandom() * 0.4);
   }
@@ -1348,6 +1386,16 @@ function render(dt) {
 
   if (gameMode === "playing" && lockedFriendId !== null) {
     drawIcon(context, lockedFriendId, ITEMS[lockedFriendId].emoji, GAME_WIDTH - 26, 58, 30);
+  }
+
+  if (gameMode === "playing" && roundType === "dodge") {
+    const blendNow = getNarrowStretchBlend(dodgeDistance);
+    const blendAhead = getNarrowStretchBlend(dodgeDistance + 250);
+    if (blendNow > 0.95) {
+      drawText("PERFEKT KØRSEL!", GAME_WIDTH / 2, 54, 22, "#ffb36b", "center");
+    } else if (blendNow > 0 || blendAhead > 0) {
+      drawText("Smal strækning!", GAME_WIDTH / 2, 54, 20, "#ffd9a8", "center");
+    }
   }
 
   if (gameMode === "playing" && roundType === "catch") {
