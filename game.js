@@ -288,6 +288,7 @@ let roundStartScore = 0;
 let ownedUpgradeIds = new Set();
 let lockedFriendId = null; // the first friend photo you catch = who you are for the rest of the run
 let investLevel = 0; // how many times you invested in yourself
+let smartDrivingEnabled = false; // menu option for Daniel: colours the narrow stretch (off by default)
 
 // Current round
 let roundDurationSeconds = SECONDS_BY_TYPE.catch;
@@ -1250,11 +1251,30 @@ function drawChainHints() {
   }
 }
 
+// True while the narrow stretch is coming up or under the sleigh.
+function isPerfectStretchNear() {
+  return getNarrowStretchBlend(dodgeDistance + 150) > 0.15 || getNarrowStretchBlend(dodgeDistance) > 0;
+}
+
+// Outlines the part of the sleigh that touches the walls, in green against the orange walls,
+// so it is easy to see how close you are. The box is exactly as wide as the real hitbox.
+function drawSleighHitbox() {
+  const boxWidth = SLEIGH_HALF_HITBOX * 2;
+  const boxHeight = 46;
+  const left = santaX - SLEIGH_HALF_HITBOX;
+  const top = SANTA_Y - boxHeight / 2;
+  context.fillStyle = "rgba(90, 255, 140, 0.2)";
+  context.fillRect(left, top, boxWidth, boxHeight);
+  context.strokeStyle = "#5aff8c";
+  context.lineWidth = 3;
+  context.strokeRect(left, top, boxWidth, boxHeight);
+}
+
 function drawDodgeWorld() {
   const rowHeight = 8;
   context.fillStyle = "#cfe3ff";
   // The walls glow orange while the narrow stretch is near or under you, so it is easy to notice.
-  const stretchIsNear = getNarrowStretchBlend(dodgeDistance + 150) > 0.15 || getNarrowStretchBlend(dodgeDistance) > 0;
+  const stretchIsNear = isPerfectStretchNear() && isSmartDrivingOn();
   context.strokeStyle = stretchIsNear ? "#ff8a5c" : "#7fb0f0";
   context.lineWidth = stretchIsNear ? 5 : 3;
 
@@ -1390,6 +1410,9 @@ function render(dt) {
     drawBossWorld();
   } else {
     drawSantaSprite();
+    if (roundType === "dodge" && isPerfectStretchNear() && isSmartDrivingOn()) {
+      drawSleighHitbox();
+    }
   }
 
   for (const popup of popups) {
@@ -1711,7 +1734,25 @@ function buildJumpToDodgeHtml() {
   if (lockedFriendId !== "daniel") {
     return "";
   }
-  return '<button id="jumpToDodge" class="jump-button">Spring til dodge-runden</button>';
+  return '<button id="smartDriving" class="toggle-button">' + getSmartDrivingLabel() + "</button>" +
+    '<button id="jumpToDodge" class="jump-button">Spring til dodge-runden</button>';
+}
+
+// Smart-driving: colours the walls orange and outlines the sleigh hitbox (green) in the narrow
+// stretch. Off by default, and only available (in the menu and in effect) when you are Daniel.
+function isSmartDrivingOn() {
+  return smartDrivingEnabled && lockedFriendId === "daniel";
+}
+
+function getSmartDrivingLabel() {
+  return "Smart-driving: " + (smartDrivingEnabled ? "TIL" : "FRA");
+}
+
+function toggleSmartDriving() {
+  smartDrivingEnabled = !smartDrivingEnabled;
+  const toggleButton = document.getElementById("smartDriving");
+  toggleButton.textContent = getSmartDrivingLabel();
+  toggleButton.classList.toggle("toggle-on", smartDrivingEnabled);
 }
 
 function findFirstRoundOfType(roundType) {
@@ -1746,6 +1787,11 @@ function openMenu() {
   const jumpButton = document.getElementById("jumpToDodge");
   if (jumpButton !== null) {
     jumpButton.addEventListener("click", jumpToDodgeRound);
+  }
+  const smartDrivingButton = document.getElementById("smartDriving");
+  if (smartDrivingButton !== null) {
+    smartDrivingButton.classList.toggle("toggle-on", smartDrivingEnabled);
+    smartDrivingButton.addEventListener("click", toggleSmartDriving);
   }
   menuPanel.style.display = "flex";
 }
