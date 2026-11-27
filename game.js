@@ -83,8 +83,8 @@ const FRIEND_POINTS = 10;
 const PROP_POINTS = 5;
 const ITEMS = {
   jennis:     { label: "Jennis", emoji: "J",  image: "jennis.jpg", round: true, color: "#c0392b", points: FRIEND_POINTS, weight: 20, size: 54 },
-  talla:      { label: "Talla",  emoji: "T",  image: "talla.jpg",  round: true, color: "#8e44ad", points: FRIEND_POINTS, weight: 20, size: 54 },
-  jaras:      { label: "Jaras",  emoji: "Ja", image: "jaras.jpg",  round: true, color: "#16a085", points: FRIEND_POINTS, weight: 20, size: 54 },
+  talla:      { label: "Natalie",  emoji: "T",  image: "talla.jpg",  round: true, color: "#8e44ad", points: FRIEND_POINTS, weight: 20, size: 54 },
+  jaras:      { label: "Jakob",  emoji: "Ja", image: "jaras.jpg",  round: true, color: "#16a085", points: FRIEND_POINTS, weight: 20, size: 54 },
   daniel:     { label: "Daniel", emoji: "D",  image: "daniel.jpg", round: true, color: "#2980b9", points: FRIEND_POINTS, weight: 20, size: 54 },
   kendama:    { label: "kendamaen", emoji: "🪀", image: "img/kendama.png",    points: PROP_POINTS, weight: 10, size: 40 },
   microphone: { label: "mikrofonen", emoji: "🎤", image: "img/microphone.png", points: PROP_POINTS, weight: 10, size: 40 },
