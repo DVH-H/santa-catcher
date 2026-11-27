@@ -6,7 +6,7 @@
 
 // Round order. "catch" rounds come first (upgrade pick before each catch round after the first),
 // then the dodge course, then the boss shooter as the finale.
-const ROUND_TYPES = ["catch", "catch", "catch", "catch", "catch", "dodge", "boss"];
+const ROUND_TYPES = ["catch", "catch", "catch", "dodge", "boss"];
 const ROUND_COUNT = ROUND_TYPES.length;
 const SECONDS_BY_TYPE = { catch: 30, dodge: 25, boss: 30 };
 const COUNTDOWN_SECONDS_BY_TYPE = { catch: 2, dodge: 3, boss: 3 };
@@ -44,6 +44,7 @@ const GAME_HEIGHT = 640;
 
 // Optional images. If a file is missing the emoji is drawn instead.
 const BACKGROUND_IMAGE = "img/background.png";
+const FINAL_IMAGE = "fælles.jpg"; // group photo behind the final score screen
 const SANTA_IMAGE = "img/santa.png";
 const SANTA_EMOJI = "🛷";
 const SANTA_DRAW_SIZE = 84;
@@ -81,11 +82,9 @@ const UPGRADES = [
   { id: "jaras-gloves",    kind: "combo", name: "Jaras' bokse",    sequence: ["jaras", "gloves"],       bonusPoints: 50, multiplier: 2, multiplierSeconds: 5 },
 
   { id: "train",     kind: "perk", icon: "🚂", name: "Polarekspressen", description: "Al kul forsvinder" },
-  { id: "bigsleigh", kind: "perk", icon: "🛷", name: "Stor kane",       description: "Bredere kane (+45%)" },
-  { id: "slowfall",  kind: "perk", icon: "🪂", name: "Faldskærm",       description: "Alt falder 15% langsommere" },
 
   // Always offered as one of the choices, can be taken again and again. Your own combo gets stronger.
-  { id: "invest",    kind: "perk", repeatable: true, icon: "📈", name: "Invester i dig selv", description: "" }
+  { id: "invest",    kind: "perk", repeatable: true, icon: "📈", name: "Invester i dig selv", description: "Din egen kombo bliver stærkere hver gang" }
 ];
 
 // Each level of "invest" adds this to YOUR OWN combo.
@@ -117,6 +116,8 @@ const TEXT = {
   gameOver: "Færdig!",
   best: "Din bedste",
   showHost: "Vis denne skærm til Daniel",
+  // Shown sideways on the final screen: turn the phone to read it. One entry = one line.
+  finalMessage: ["Glædelig jul venner,", "tak for i år"],
   pickTitle: "Vælg en opgradering",
   yourDeck: "Dit dæk"
 };
@@ -346,15 +347,11 @@ function getSpawnWeight(itemId) {
 }
 
 function getCatchWidth() {
-  return hasUpgrade("bigsleigh") ? SANTA_CATCH_WIDTH * 1.45 : SANTA_CATCH_WIDTH;
+  return SANTA_CATCH_WIDTH;
 }
 
 function getFallSpeedFactor() {
-  let factor = slowSecondsLeft > 0 ? 0.5 : 1;
-  if (hasUpgrade("slowfall")) {
-    factor *= 0.85;
-  }
-  return factor;
+  return slowSecondsLeft > 0 ? 0.5 : 1;
 }
 
 // ---------- run and round flow ----------
@@ -911,10 +908,9 @@ function stepBoss(dt) {
     spawnBossEnemy();
   }
 
-  const fallFactor = hasUpgrade("slowfall") ? 0.85 : 1;
   for (const enemy of bossEnemies) {
     enemy.x += enemy.vx * dt;
-    enemy.y += enemy.vy * fallFactor * dt;
+    enemy.y += enemy.vy * dt;
     const halfSize = enemy.size / 2;
     if (enemy.x < halfSize) {
       enemy.x = halfSize;
@@ -1168,8 +1164,7 @@ function drawSantaSprite() {
   if (isBlinking()) {
     return;
   }
-  const santaScale = hasUpgrade("bigsleigh") && getRoundType() === "catch" ? 1.25 : 1;
-  drawIcon(context, "santa", SANTA_EMOJI, santaX, SANTA_Y, SANTA_DRAW_SIZE * santaScale);
+  drawIcon(context, "santa", SANTA_EMOJI, santaX, SANTA_Y, SANTA_DRAW_SIZE);
 }
 
 function drawBossWorld() {
@@ -1275,7 +1270,7 @@ function render(dt) {
 
   if (gameMode === "playing" || gameMode === "countdown") {
     drawText("Point " + Math.round(score), 14, 24, 22, "#ffffff", "left");
-    drawText(String(Math.ceil(roundSecondsLeft)) + "s", GAME_WIDTH - 14, 24, 22, "#ffffff", "right");
+    drawText(String(Math.ceil(roundSecondsLeft)) + "s", GAME_WIDTH - 52, 24, 22, "#ffffff", "right"); // menu button sits in the corner
     drawText(getRoundLabel(), GAME_WIDTH / 2, 24, 16, roundType === "catch" ? "#b8e4ff" : "#ff9a8a", "center");
   }
 
@@ -1348,7 +1343,7 @@ function describeCombo(combo, level) {
 }
 
 function getUpgradeDescription(upgrade) {
-  if (upgrade.id === "invest") {
+  if (upgrade.id === "invest" && lockedFriendId !== null) {
     const ownCombo = findStarterCombo(lockedFriendId);
     return ownCombo.name + ": " + describeCombo(ownCombo, investLevel) + " → " + describeCombo(ownCombo, investLevel + 1);
   }
@@ -1367,7 +1362,13 @@ function buildItemTableHtml() {
   return html;
 }
 
+function resetOverlayStyle() {
+  overlay.className = "";
+  overlay.style.backgroundImage = "";
+}
+
 function showIntroOverlay() {
+  resetOverlayStyle();
   overlay.innerHTML =
     "<h1>" + TEXT.title + "</h1>" +
     "<p>" + TEXT.intro + "</p>" +
@@ -1416,6 +1417,7 @@ function showPickOverlay() {
   }
   const deckLine = ownedNames.length > 0 ? TEXT.yourDeck + ": " + ownedNames.join(", ") : "";
 
+  resetOverlayStyle();
   overlay.innerHTML =
     "<h2>Runde " + (roundIndex + 1) + " færdig</h2>" +
     '<div class="small">+' + roundGain + " denne runde · i alt " + Math.round(score) + "</div>" +
@@ -1434,12 +1436,21 @@ function showPickOverlay() {
 }
 
 function showFinalOverlay(finalScore, bestScore) {
+  // Group photo behind everything, darker at the top and bottom so the text stays readable.
+  overlay.className = "final";
+  overlay.style.backgroundImage =
+    "linear-gradient(to bottom, rgba(6,16,31,0.8) 0%, rgba(6,16,31,0.15) 35%, rgba(6,16,31,0.15) 65%, rgba(6,16,31,0.85) 100%), " +
+    'url("' + encodeURI(FINAL_IMAGE) + '")';
+
+  // The message is rotated 90 degrees (vertical writing): turn the phone to read all of it.
+  const messageLines = TEXT.finalMessage.join("<br>");
   overlay.innerHTML =
-    "<h2>" + TEXT.gameOver + "</h2>" +
+    '<div class="final-top"><h2>' + TEXT.gameOver + "</h2>" +
     '<div class="big-score">' + finalScore + "</div>" +
-    '<div class="small">' + TEXT.best + ": " + bestScore + "</div>" +
-    '<button id="startButton">' + TEXT.again + "</button>" +
-    '<div class="small">' + TEXT.showHost + "</div>";
+    '<div class="small">' + TEXT.best + ": " + bestScore + "</div></div>" +
+    '<div class="final-message">' + messageLines + "</div>" +
+    '<div class="final-bottom"><button id="startButton">' + TEXT.again + "</button>" +
+    '<div class="small">' + TEXT.showHost + "</div></div>";
 
   document.getElementById("startButton").addEventListener("click", startRun);
   overlay.style.display = "flex";
@@ -1500,6 +1511,74 @@ resize();
 // Main loop
 // ============================================================
 
+// ---------- menu (pauses the game) ----------
+
+const menuButton = document.getElementById("menuButton");
+const menuPanel = document.getElementById("menuPanel");
+let modeBeforePause = null;
+
+function canOpenMenu() {
+  return gameMode === "choose" || gameMode === "countdown" || gameMode === "playing";
+}
+
+function buildUpgradeListHtml() {
+  let html = "";
+  for (const upgrade of UPGRADES) {
+    let iconPart = "";
+    let descriptionPart = "";
+    if (upgrade.kind === "combo") {
+      iconPart = upgrade.sequence.map(iconHtml).join('<span class="arrow">+</span>');
+      descriptionPart = "Kombo: " + describeCombo(upgrade);
+    } else {
+      iconPart = '<span class="icon big">' + upgrade.icon + "</span>";
+      descriptionPart = getUpgradeDescription(upgrade);
+    }
+    let ownedTag = "";
+    if (upgrade.id === "invest" && investLevel > 0) {
+      ownedTag = ' <span class="tag owned-tag">x' + investLevel + "</span>";
+    } else if (upgrade.id !== "invest" && hasUpgrade(upgrade.id)) {
+      ownedTag = ' <span class="tag owned-tag">Har</span>';
+    }
+    const ownedClass = ownedTag !== "" ? " owned" : "";
+    html += '<div class="row' + ownedClass + '"><div class="row-icons">' + iconPart + "</div>" +
+      '<div><div class="row-title">' + upgrade.name + ownedTag + "</div><div>" + descriptionPart + "</div></div></div>";
+  }
+  return html;
+}
+
+function buildMenuHtml() {
+  return '<div class="menu-top"><h2>Menu</h2><button id="menuClose">▶ Fortsæt</button></div>' +
+    "<h3>Symboler og point</h3>" +
+    buildItemTableHtml() +
+    '<div class="small">Dit eget foto giver x2. Multiplikator gælder kun positive point.</div>' +
+    "<h3>Opgraderinger og perks</h3>" +
+    buildUpgradeListHtml();
+}
+
+function openMenu() {
+  if (!canOpenMenu()) {
+    return;
+  }
+  modeBeforePause = gameMode;
+  gameMode = "paused";
+  menuPanel.innerHTML = buildMenuHtml();
+  menuPanel.scrollTop = 0;
+  document.getElementById("menuClose").addEventListener("click", closeMenu);
+  menuPanel.style.display = "flex";
+}
+
+function closeMenu() {
+  if (gameMode !== "paused") {
+    return;
+  }
+  gameMode = modeBeforePause;
+  modeBeforePause = null;
+  menuPanel.style.display = "none";
+  accumulatorSeconds = 0;
+}
+
+menuButton.addEventListener("click", openMenu);
+
 let lastTimestamp = null;
 let accumulatorSeconds = 0;
 
@@ -1512,6 +1591,8 @@ function frameLoop(timestamp) {
   if (frameSeconds > 0.25) {
     frameSeconds = 0.25; // tab was in background
   }
+
+  menuButton.style.display = canOpenMenu() ? "block" : "none";
 
   if (gameMode === "countdown") {
     // Santa can already move during the countdown.
